@@ -1,30 +1,31 @@
 """
-Cold email sender — reads an enriched leads CSV and sends outreach emails via
-Brevo SMTP. Writes sent=true + sent_at back to the same CSV after each send.
+Cold email sender — Brevo transactional email API (POST /v3/smtp/email).
+
+Uses textContent (plain text) not htmlContent. No SMTP, no MIME assembly.
+Writes sent=true + sent_at back to the CSV after each successful send.
 
 Safety rails:
   - Skips rows with no email or sent=true
   - Hard cap of MAX_DAILY (default 20) sends per calendar day
-  - Daily count is derived from the CSV itself (sent_at date), so restarts
-    and --resume all share the same limit correctly
-  - Random 60-180s delay between sends (configurable)
-  - Plain-text only, no links, no HTML — inbox-friendly during warmup
+  - Daily count derived from the CSV itself — safe across restarts
+  - Random 60-180s delay between sends
 """
 
 import csv
+import json
 import logging
 import os
 import random
-import smtplib
 import time
 from datetime import date, datetime, timezone
-from email.mime.text import MIMEText
-from pathlib import Path
-from typing import Optional
+
+import requests
 
 logger = logging.getLogger("treatwell")
 
-MAX_DAILY = 20
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+
+MAX_DAILY      = 20
 SEND_DELAY_MIN = 60   # seconds
 SEND_DELAY_MAX = 180
 
@@ -44,76 +45,59 @@ bookbarber.design"""
 
 
 # ---------------------------------------------------------------------------
-# SMTP helpers
+# API helpers
 # ---------------------------------------------------------------------------
 
-def _build_smtp_config() -> dict:
-    required = [
-        "BREVO_SMTP_HOST", "BREVO_SMTP_PORT",
-        "BREVO_SMTP_LOGIN", "BREVO_SMTP_PASSWORD",
-        "BREVO_SENDER_EMAIL", "BREVO_SENDER_NAME",
-    ]
+def _build_config() -> dict:
+    required = ["BREVO_API_KEY", "BREVO_SENDER_EMAIL", "BREVO_SENDER_NAME"]
     missing = [k for k in required if not os.getenv(k)]
     if missing:
         raise EnvironmentError(
-            f"Missing required env vars: {', '.join(missing)}. "
-            "Check your .env file."
+            f"Missing required env vars: {', '.join(missing)}. Check your .env file."
         )
     return {
-        "host": os.environ["BREVO_SMTP_HOST"],
-        "port": int(os.environ["BREVO_SMTP_PORT"]),
-        "login": os.environ["BREVO_SMTP_LOGIN"],
-        "password": os.environ["BREVO_SMTP_PASSWORD"],
+        "api_key":      os.environ["BREVO_API_KEY"],
         "sender_email": os.environ["BREVO_SENDER_EMAIL"],
-        "sender_name": os.environ["BREVO_SENDER_NAME"],
+        "sender_name":  os.environ["BREVO_SENDER_NAME"],
     }
 
 
-def _connect_smtp(cfg: dict) -> smtplib.SMTP:
-    server = smtplib.SMTP(cfg["host"], cfg["port"], timeout=30)
-    server.ehlo()
-    server.starttls()
-    server.ehlo()
-    server.login(cfg["login"], cfg["password"])
-    return server
-
-
-def _send_one(server: smtplib.SMTP, cfg: dict, to_email: str, shop_name: str) -> None:
-    body = EMAIL_BODY_TEMPLATE.format(shop_name=shop_name)
-
-    # us-ascii charset forces Content-Transfer-Encoding: 7bit — the body is sent
-    # verbatim over the wire with no encoding layer. utf-8 would trigger base64,
-    # which Brevo's relay re-interprets and may rewrap as HTML. The template uses
-    # ASCII-only characters so us-ascii is safe here.
-    msg = MIMEText(body, "plain", "us-ascii")
-    msg["Subject"] = EMAIL_SUBJECT
-    msg["From"] = f"{cfg['sender_name']} <{cfg['sender_email']}>"
-    msg["To"] = to_email
-
-    # Envelope MAIL FROM matches From header domain — same address both places.
-    server.sendmail(cfg["sender_email"], [to_email], msg.as_string())
+def _send_one(cfg: dict, to_email: str, shop_name: str) -> None:
+    payload = {
+        "sender":      {"name": cfg["sender_name"], "email": cfg["sender_email"]},
+        "to":          [{"email": to_email}],
+        "subject":     EMAIL_SUBJECT,
+        "textContent": EMAIL_BODY_TEMPLATE.format(shop_name=shop_name),
+    }
+    headers = {
+        "api-key":      cfg["api_key"],
+        "Content-Type": "application/json",
+        "Accept":       "application/json",
+    }
+    resp = requests.post(BREVO_API_URL, json=payload, headers=headers, timeout=15)
+    if not resp.ok:
+        raise RuntimeError(
+            f"Brevo API error {resp.status_code}: {resp.text}"
+        )
+    logger.debug(f"  Brevo response: {resp.status_code} {resp.text}")
 
 
 # ---------------------------------------------------------------------------
-# CSV read / write
+# CSV helpers
 # ---------------------------------------------------------------------------
 
 def _load_csv(path: str) -> tuple[list[dict], list[str]]:
-    """Return (rows, fieldnames). Adds sent/sent_at columns if absent."""
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         fieldnames = list(reader.fieldnames or [])
         rows = list(reader)
-
     if "sent" not in fieldnames:
         fieldnames.append("sent")
     if "sent_at" not in fieldnames:
         fieldnames.append("sent_at")
-
     for row in rows:
         row.setdefault("sent", "")
         row.setdefault("sent_at", "")
-
     return rows, fieldnames
 
 
@@ -134,18 +118,15 @@ def _count_sent_today(rows: list[dict]) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Main send loop
+# Public interface
 # ---------------------------------------------------------------------------
 
 def send_test_email(to_email: str) -> None:
-    """Send a single test email without touching the CSV or daily limit."""
-    cfg = _build_smtp_config()
-    logger.info(f"Connecting to Brevo SMTP...")
-    server = _connect_smtp(cfg)
-    logger.info(f"Connected. Sending test to {to_email} ...")
-    _send_one(server, cfg, to_email, shop_name="Test Barber")
-    server.quit()
-    logger.info(f"Test email sent to {to_email}")
+    """Send one email to to_email — no CSV, no daily limit."""
+    cfg = _build_config()
+    logger.info(f"Sending test via Brevo API to {to_email} ...")
+    _send_one(cfg, to_email, shop_name="Test Barber")
+    logger.info("Done.")
 
 
 def send_emails(
@@ -155,9 +136,6 @@ def send_emails(
     delay_max: float = SEND_DELAY_MAX,
     dry_run: bool = False,
 ) -> None:
-    """
-    Read the enriched CSV, send unsent emails, and write results back in-place.
-    """
     rows, fieldnames = _load_csv(csv_path)
 
     already_sent_today = _count_sent_today(rows)
@@ -170,87 +148,60 @@ def send_emails(
         )
         return
 
-    # Candidates: has email, not yet sent
     pending = [
         (i, r) for i, r in enumerate(rows)
         if r.get("email", "").strip()
         and r.get("sent", "").lower() != "true"
     ]
-
     if not pending:
         logger.info("No unsent leads with email addresses found.")
         return
 
-    remaining_quota = max_daily - already_sent_today
-    to_send = pending[:remaining_quota]
-    skipped_quota = len(pending) - len(to_send)
-
+    quota     = max_daily - already_sent_today
+    to_send   = pending[:quota]
+    deferred  = len(pending) - len(to_send)
     logger.info(
-        f"{len(pending)} unsent leads with emails | "
-        f"sending {len(to_send)} today | "
-        f"{skipped_quota} deferred to tomorrow"
+        f"{len(pending)} unsent leads | sending {len(to_send)} today"
+        + (f" | {deferred} deferred to tomorrow" if deferred else "")
     )
 
     if dry_run:
         logger.info("[DRY RUN] Would send to:")
         for _, row in to_send:
-            logger.info(f"  {row['email']} — {row['name']!r}")
+            logger.info(f"  {row['email']} - {row['name']!r}")
         return
 
-    cfg = _build_smtp_config()
-
-    server: Optional[smtplib.SMTP] = None
+    cfg = _build_config()
     sent_count = 0
 
     try:
-        logger.info("Connecting to Brevo SMTP...")
-        server = _connect_smtp(cfg)
-        logger.info("Connected.")
-
         for idx, (row_index, row) in enumerate(to_send):
             email = row["email"].strip()
-            name = row.get("name", "").strip() or "there"
+            name  = row.get("name", "").strip() or "there"
+            logger.info(f"[{idx + 1}/{len(to_send)}] {email} ({name!r})")
 
-            logger.info(
-                f"[{idx + 1}/{len(to_send)}] Sending to {email} ({name!r})"
-            )
+            _send_one(cfg, email, name)
 
-            try:
-                _send_one(server, cfg, email, name)
-            except smtplib.SMTPServerDisconnected:
-                # Reconnect once if the server dropped the connection
-                logger.warning("SMTP connection dropped, reconnecting...")
-                server = _connect_smtp(cfg)
-                _send_one(server, cfg, email, name)
-
-            # Mark as sent and persist immediately
-            rows[row_index]["sent"] = "true"
+            rows[row_index]["sent"]    = "true"
             rows[row_index]["sent_at"] = datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             )
             _save_csv(rows, fieldnames, csv_path)
             sent_count += 1
-            logger.info(f"  Sent. ({sent_count} sent this session)")
+            logger.info(f"  Sent. ({sent_count} this session)")
 
-            # Delay before the next send (skip delay after last email)
             if idx < len(to_send) - 1:
                 delay = random.uniform(delay_min, delay_max)
-                logger.info(f"  Waiting {delay:.0f}s before next send...")
+                logger.info(f"  Waiting {delay:.0f}s ...")
                 time.sleep(delay)
 
     except KeyboardInterrupt:
-        logger.info(f"Interrupted. {sent_count} emails sent this session.")
+        logger.info(f"Interrupted. {sent_count} sent this session.")
     except Exception as exc:
         logger.error(f"Send error after {sent_count} emails: {exc}", exc_info=True)
         raise
-    finally:
-        if server:
-            try:
-                server.quit()
-            except Exception:
-                pass
 
     logger.info(
-        f"=== Done. {sent_count} emails sent this session. "
-        f"Total today: {already_sent_today + sent_count}/{max_daily} ==="
+        f"=== Done. {sent_count} sent this session | "
+        f"total today: {already_sent_today + sent_count}/{max_daily} ==="
     )
