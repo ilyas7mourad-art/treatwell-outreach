@@ -1,0 +1,17 @@
+[Unit]
+Description=Treatwell Scraper Loop (continuous scrape + enrich)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mma/treatwell-outreach
+ExecStart=/home/mma/treatwell-outreach/run_scraper_loop.sh
+Restart=always
+RestartSec=60
+StandardOutput=append:/home/mma/treatwell-outreach/logs/scraper_loop.log
+StandardError=append:/home/mma/treatwell-outreach/logs/scraper_loop.log
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

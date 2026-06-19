@@ -59,26 +59,34 @@ echo "  If Google Maps enrichment fails with missing libs, run once on the serve
 echo "    sudo $PLAYWRIGHT install-deps chromium"
 EOF
 
-# ── 5. Install systemd service (user-level — no sudo required) ───────────────
-echo "[5/6] Installing systemd service (treatwell-outreach)..."
+# ── 5. Install systemd services (user-level — no sudo required) ──────────────
+echo "[5/6] Installing systemd services..."
 ssh "$SERVER" bash -s -- "$REMOTE_DIR" <<'ENDSSH'
 REMOTE_DIR="$1"
-chmod +x "$REMOTE_DIR/run_pipeline.sh"
+chmod +x "$REMOTE_DIR/run_pipeline.sh" "$REMOTE_DIR/run_scraper_loop.sh"
 
 mkdir -p ~/.config/systemd/user/
-sed '/^User=/d' "$REMOTE_DIR/treatwell-outreach.service" \
-    | sed 's/WantedBy=multi-user.target/WantedBy=default.target/' \
-    > ~/.config/systemd/user/treatwell-outreach.service
+
+# Daily send service (oneshot, triggered by cron)
+cp "$REMOTE_DIR/treatwell-outreach.service" \
+   ~/.config/systemd/user/treatwell-outreach.service
+
+# Continuous scraper loop service (simple daemon)
+cp "$REMOTE_DIR/treatwell-scraper-loop.service" \
+   ~/.config/systemd/user/treatwell-scraper-loop.service
 
 systemctl --user daemon-reload
 systemctl --user enable treatwell-outreach
-echo "  User service installed and enabled (no sudo needed)."
-echo "  Start manually:  systemctl --user start treatwell-outreach"
-echo "  Check status:    systemctl --user status treatwell-outreach"
+systemctl --user enable treatwell-scraper-loop
+systemctl --user restart treatwell-scraper-loop
+
+echo "  Services installed."
+echo "  Scraper loop:  systemctl --user status treatwell-scraper-loop"
+echo "  Send service:  systemctl --user status treatwell-outreach"
 ENDSSH
 
 # ── 6. Set up cron job (9am London time daily) ───────────────────────────────
-echo "[6/6] Setting up cron job..."
+echo "[6/6] Setting up cron job (daily email send)..."
 ssh "$SERVER" bash -s -- "$REMOTE_DIR" <<'EOF'
 REMOTE_DIR="$1"
 CRON_JOB="0 9 * * * $REMOTE_DIR/run_pipeline.sh >> $REMOTE_DIR/logs/cron.log 2>&1"
@@ -101,12 +109,12 @@ echo "========================================================"
 echo ""
 echo "  SSH into server:    ssh $SERVER"
 echo ""
-echo "  Manual run:         systemctl --user start treatwell-outreach"
-echo "  Stop pipeline:      systemctl --user stop treatwell-outreach"
-echo "  Service status:     systemctl --user status treatwell-outreach"
-echo "  Live pipeline log:  tail -f $REMOTE_DIR/logs/pipeline.log"
-echo "  Cron log:           tail -f $REMOTE_DIR/logs/cron.log"
+echo "  Scraper loop status: systemctl --user status treatwell-scraper-loop"
+echo "  Scraper loop log:    tail -f $REMOTE_DIR/logs/scraper_loop.log"
 echo ""
-echo "  Cron: daily at 9am London time"
-echo "  Scrapes: london + manchester, max 5 pages"
-echo "  Daily send cap: 20 emails"
+echo "  Send service status: systemctl --user status treatwell-outreach"
+echo "  Send log:            tail -f $REMOTE_DIR/logs/pipeline.log"
+echo "  Cron log:            tail -f $REMOTE_DIR/logs/cron.log"
+echo ""
+echo "  Scraper: runs 24/7, scrapes every hour, merges into leads_master.csv"
+echo "  Sender:  cron at 9am London time, max 20 emails/day"
