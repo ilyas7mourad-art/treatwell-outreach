@@ -19,7 +19,6 @@ import smtplib
 import time
 from datetime import date, datetime, timezone
 from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from typing import Optional
 
@@ -82,14 +81,16 @@ def _connect_smtp(cfg: dict) -> smtplib.SMTP:
 def _send_one(server: smtplib.SMTP, cfg: dict, to_email: str, shop_name: str) -> None:
     body = EMAIL_BODY_TEMPLATE.format(shop_name=shop_name)
 
-    msg = MIMEMultipart("alternative")
+    # Pure text/plain — no multipart, no HTML part. MIMEMultipart("alternative")
+    # triggers MIME_HTML_ONLY / HTML_IMAGE_ONLY in SpamAssassin even with a single
+    # plain-text attachment because the MIME envelope looks like it's hiding content.
+    msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = EMAIL_SUBJECT
+    # Both From header and MAIL FROM envelope must use the same domain to avoid
+    # HEADER_FROM_DIFFERENT_DOMAINS. Brevo authenticates with the SMTP login but
+    # sends on behalf of sender_email — these must match what's verified in Brevo.
     msg["From"] = f"{cfg['sender_name']} <{cfg['sender_email']}>"
     msg["To"] = to_email
-    # Suppress list-unsubscribe and bulk headers that trigger spam filters
-    msg["X-Mailer"] = "Python"
-
-    msg.attach(MIMEText(body, "plain", "utf-8"))
 
     server.sendmail(cfg["sender_email"], [to_email], msg.as_string())
 
