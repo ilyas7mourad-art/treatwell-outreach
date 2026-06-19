@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from .email_sender import send_emails, MAX_DAILY, SEND_DELAY_MIN, SEND_DELAY_MAX
+from .email_sender import send_emails, send_test_email, MAX_DAILY, SEND_DELAY_MIN, SEND_DELAY_MAX
 from .utils import setup_logging
 
 
@@ -28,8 +28,9 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--input",
-        required=True,
-        help="Enriched leads CSV (supports glob, e.g. output/leads_*_enriched.csv)",
+        default=None,
+        help="Enriched leads CSV (supports glob, e.g. output/leads_*_enriched.csv). "
+             "Not required when --test-email is used.",
     )
     p.add_argument(
         "--max-daily",
@@ -50,6 +51,11 @@ def parse_args() -> argparse.Namespace:
         help=f"Max seconds between sends (default: {SEND_DELAY_MAX})",
     )
     p.add_argument(
+        "--test-email",
+        metavar="ADDRESS",
+        help="Send one test email to this address and exit (ignores CSV, daily limit, delays)",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="Print what would be sent without actually sending",
@@ -65,6 +71,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     logger = setup_logging(level=args.log_level)
+
+    # --test-email: fire one email and exit, no CSV needed
+    if args.test_email:
+        logger.info(f"=== Test send to {args.test_email} ===")
+        send_test_email(args.test_email)
+        return
+
+    if not args.input:
+        logger.error("--input is required unless --test-email is used.")
+        sys.exit(1)
 
     # Resolve glob pattern to a single file
     matches = sorted(glob.glob(args.input))

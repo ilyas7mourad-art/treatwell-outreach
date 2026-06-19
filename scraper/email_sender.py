@@ -137,6 +137,17 @@ def _count_sent_today(rows: list[dict]) -> int:
 # Main send loop
 # ---------------------------------------------------------------------------
 
+def send_test_email(to_email: str) -> None:
+    """Send a single test email without touching the CSV or daily limit."""
+    cfg = _build_smtp_config()
+    logger.info(f"Connecting to Brevo SMTP...")
+    server = _connect_smtp(cfg)
+    logger.info(f"Connected. Sending test to {to_email} ...")
+    _send_one(server, cfg, to_email, shop_name="Test Barber")
+    server.quit()
+    logger.info(f"Test email sent to {to_email}")
+
+
 def send_emails(
     csv_path: str,
     max_daily: int = MAX_DAILY,
