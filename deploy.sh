@@ -4,8 +4,8 @@
 # Idempotent — safe to re-run for updates.
 set -euo pipefail
 
-SERVER="mourad@100.96.142.127"
-REMOTE_DIR="/home/mourad/treatwell-outreach"
+SERVER="mma@100.96.142.127"
+REMOTE_DIR="/home/mma/treatwell-outreach"
 REPO="https://github.com/ilyas7mourad-art/treatwell-outreach.git"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -51,25 +51,31 @@ EOF
 echo "[4/6] Installing Playwright Chromium..."
 ssh "$SERVER" bash -s -- "$REMOTE_DIR" <<'EOF'
 REMOTE_DIR="$1"
-# Install Chromium browser for the current user
-python3 -m playwright install chromium
-# Install OS-level dependencies (needs sudo)
-sudo python3 -m playwright install-deps chromium
+# pip --break-system-packages installs scripts to ~/.local/bin
+PLAYWRIGHT="$(command -v playwright 2>/dev/null || echo ~/.local/bin/playwright)"
+"$PLAYWRIGHT" install chromium
 echo "  Playwright Chromium ready."
+echo "  If Google Maps enrichment fails with missing libs, run once on the server:"
+echo "    sudo $PLAYWRIGHT install-deps chromium"
 EOF
 
-# ── 5. Install systemd service ───────────────────────────────────────────────
+# ── 5. Install systemd service (user-level — no sudo required) ───────────────
 echo "[5/6] Installing systemd service (treatwell-outreach)..."
-ssh "$SERVER" bash -s -- "$REMOTE_DIR" <<'EOF'
+ssh "$SERVER" bash -s -- "$REMOTE_DIR" <<'ENDSSH'
 REMOTE_DIR="$1"
 chmod +x "$REMOTE_DIR/run_pipeline.sh"
-sudo cp "$REMOTE_DIR/treatwell-outreach.service" /etc/systemd/system/treatwell-outreach.service
-sudo systemctl daemon-reload
-sudo systemctl enable treatwell-outreach
-echo "  Service installed and enabled."
-echo "  Start manually:  sudo systemctl start treatwell-outreach"
-echo "  Check status:    sudo systemctl status treatwell-outreach"
-EOF
+
+mkdir -p ~/.config/systemd/user/
+sed '/^User=/d' "$REMOTE_DIR/treatwell-outreach.service" \
+    | sed 's/WantedBy=multi-user.target/WantedBy=default.target/' \
+    > ~/.config/systemd/user/treatwell-outreach.service
+
+systemctl --user daemon-reload
+systemctl --user enable treatwell-outreach
+echo "  User service installed and enabled (no sudo needed)."
+echo "  Start manually:  systemctl --user start treatwell-outreach"
+echo "  Check status:    systemctl --user status treatwell-outreach"
+ENDSSH
 
 # ── 6. Set up cron job (9am London time daily) ───────────────────────────────
 echo "[6/6] Setting up cron job..."
@@ -95,9 +101,9 @@ echo "========================================================"
 echo ""
 echo "  SSH into server:    ssh $SERVER"
 echo ""
-echo "  Manual run:         sudo systemctl start treatwell-outreach"
-echo "  Stop pipeline:      sudo systemctl stop treatwell-outreach"
-echo "  Service status:     sudo systemctl status treatwell-outreach"
+echo "  Manual run:         systemctl --user start treatwell-outreach"
+echo "  Stop pipeline:      systemctl --user stop treatwell-outreach"
+echo "  Service status:     systemctl --user status treatwell-outreach"
 echo "  Live pipeline log:  tail -f $REMOTE_DIR/logs/pipeline.log"
 echo "  Cron log:           tail -f $REMOTE_DIR/logs/cron.log"
 echo ""
