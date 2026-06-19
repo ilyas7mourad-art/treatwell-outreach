@@ -113,75 +113,86 @@ def fetch_html(session: requests.Session, url: str, retries: int = 3) -> str | N
 
 def parse_listing_page(html: str, site_key: str, city: str, listing_url: str) -> list[Venue]:
     """Extract venue cards from a listing page."""
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "lxml")
     venues: list[Venue] = []
 
     base_url = SITES[site_key]["base"]
     country = "UK" if site_key == "uk" else "FR"
 
-    # Treatwell wraps each venue card in an <a> linking to /place/{slug}/
-    # The slug pattern differs slightly by country
-    slug_pattern = re.compile(r"^/place[s]?/[^/]+/?$")
+    # Treatwell renders each card as a full <a> tag with an absolute URL.
+    # href looks like: https://www.treatwell.co.uk/place/{slug}/?serviceIds=...
+    # We match on the path segment only (after stripping the domain and query).
+    place_re = re.compile(r"/place/([^/?&#]+)")
 
     seen_slugs: set[str] = set()
 
     for a_tag in soup.find_all("a", href=True):
         href: str = a_tag["href"]
-        # Match venue detail links (not listing or other nav links)
-        if not re.match(r"^/place/[^/]+/?$", href) and not re.match(r"^/salon/[^/]+/?$", href):
+
+        m = place_re.search(href)
+        if not m:
             continue
-        if href in seen_slugs:
+
+        slug = m.group(1)
+        if slug in seen_slugs:
             continue
-        seen_slugs.add(href)
+        seen_slugs.add(slug)
+
+        # Clean booking URL: strip query params so the slug is the canonical link
+        clean_url = f"{base_url}/place/{slug}/"
 
         v = Venue(
             site=site_key,
             country=country,
             city=city.replace("-", " ").title(),
-            booking_url=urljoin(base_url, href),
-            treatwell_slug=href.strip("/").split("/")[-1],
+            booking_url=clean_url,
+            treatwell_slug=slug,
             source_listing_url=listing_url,
         )
 
-        # Try to extract name, rating, reviews from the card context
-        # Walk up to find the card container, then pull text elements
-        card = a_tag
-        for _ in range(5):  # walk up max 5 levels
-            parent = card.parent
-            if parent is None:
-                break
-            card = parent
-            text = card.get_text(separator=" ", strip=True)
-            if len(text) > 50:
-                break
-
-        card_text = card.get_text(separator="\n", strip=True)
-
-        # Name: first meaningful text node inside the <a> tag
-        name_el = a_tag.find(["h2", "h3", "h4", "span", "p"])
+        # ── Name ─────────────────────────────────────────────────────────────
+        # Observed: <h2 class="Text-module_mdHeader__...">Venue Name</h2>
+        name_el = a_tag.find("h2")
         if name_el:
             v.name = name_el.get_text(strip=True)
         else:
-            # fallback: first non-empty text child of <a>
-            for child in a_tag.strings:
-                clean = child.strip()
-                if clean and len(clean) > 2:
+            # fallback: first non-trivial text string in the card
+            for s in a_tag.strings:
+                clean = s.strip()
+                if clean and len(clean) > 3:
                     v.name = clean
                     break
 
-        # Rating: look for a decimal like 4.9 or 4,8 near the card
-        rating_match = re.search(r"\b([45]\.[0-9]|[45],[0-9])\b", card_text)
-        if rating_match:
-            v.rating = rating_match.group(1).replace(",", ".")
+        # ── Rating ───────────────────────────────────────────────────────────
+        # Observed: <span class="...Rating-module_label...">4.9</span>
+        rating_el = a_tag.find("span", class_=re.compile(r"Rating-module_label|rating.*label|note", re.I))
+        if rating_el:
+            v.rating = rating_el.get_text(strip=True)
+        else:
+            # regex fallback on card text
+            card_text = a_tag.get_text(separator="\n")
+            rm = re.search(r"\b([45]\.[0-9]|[45],[0-9])\b", card_text)
+            if rm:
+                v.rating = rm.group(1).replace(",", ".")
 
-        # Review count
-        review_match = re.search(r"(\d[\d,]+)\s*(?:reviews?|avis)", card_text, re.I)
-        if review_match:
-            v.review_count = review_match.group(1).replace(",", "")
+        # ── Review count ─────────────────────────────────────────────────────
+        # Observed: <span class="...BrowseResultRating-module--label...">1267 reviews</span>
+        review_el = a_tag.find("span", class_=re.compile(r"BrowseResultRating|review|avis", re.I))
+        if review_el:
+            rev_text = review_el.get_text(strip=True)
+            m2 = re.search(r"([\d,]+)", rev_text)
+            if m2:
+                v.review_count = m2.group(1).replace(",", "")
+        else:
+            card_text = a_tag.get_text(separator="\n")
+            m2 = re.search(r"([\d,]+)\s*(?:reviews?|avis)", card_text, re.I)
+            if m2:
+                v.review_count = m2.group(1).replace(",", "")
 
-        # Services preview: grab first price-bearing line
+        # ── Services preview ─────────────────────────────────────────────────
+        card_text = a_tag.get_text(separator="\n")
         price_lines = [
-            line for line in card_text.splitlines()
+            line.strip() for line in card_text.splitlines()
             if re.search(r"[£€]\s*\d+", line)
         ]
         if price_lines:
@@ -198,41 +209,31 @@ def parse_listing_page(html: str, site_key: str, city: str, listing_url: str) ->
 
 def parse_venue_page(html: str, venue: Venue) -> Venue:
     """Enrich a Venue with data from its detail page."""
-    soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text(separator="\n", strip=True)
+    import json as _json
+    soup = BeautifulSoup(html, "lxml")
 
-    # Full name (more reliable from detail page)
-    for tag in soup.find_all(["h1", "h2"]):
-        candidate = tag.get_text(strip=True)
-        if candidate and len(candidate) > 3:
-            venue.name = candidate
-            break
-
-    # Address patterns
-    address_patterns = [
-        r"\d+[^,\n]{3,60},\s*[A-Z][A-Za-z\s]+,\s*[A-Z]{1,2}\d",  # UK postcode
-        r"\d+[^,\n]{3,60},\s*\d{5}\s+[A-Z][a-zA-Z\s]+",          # FR postcode
-        r"\d+[^,\n]{3,60},\s*[A-Z][a-zA-Z\s-]{2,40}",             # generic
-    ]
-    for pattern in address_patterns:
-        m = re.search(pattern, text)
-        if m:
-            venue.address = m.group(0).strip()
-            break
-
-    # JSON-LD structured data (schema.org)
+    # JSON-LD is the most reliable source — parse it first.
+    # Treatwell uses {"@context":..., "@graph":[...]} wrapping.
     for script in soup.find_all("script", type="application/ld+json"):
         try:
-            import json
-            data = json.loads(script.string or "")
+            data = _json.loads(script.string or "")
+            candidates = []
             if isinstance(data, dict):
-                _extract_jsonld(data, venue)
+                # Unwrap @graph if present
+                candidates = data.get("@graph", [data])
             elif isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        _extract_jsonld(item, venue)
+                candidates = data
+            for item in candidates:
+                if isinstance(item, dict):
+                    _extract_jsonld(item, venue)
         except Exception:
             pass
+
+    # Fallback: h1 for name if JSON-LD didn't give us one
+    if not venue.name:
+        tag = soup.find("h1")
+        if tag:
+            venue.name = tag.get_text(strip=True)
 
     return venue
 
@@ -248,12 +249,8 @@ def _extract_jsonld(data: dict, venue: Venue) -> None:
             addr.get("streetAddress", ""),
             addr.get("addressLocality", ""),
             addr.get("postalCode", ""),
-            addr.get("addressCountry", ""),
         ]
         venue.address = ", ".join(p for p in parts if p)
-
-    if data.get("telephone") and not hasattr(venue, "phone"):
-        venue.address = venue.address  # phone not in dataclass yet — skip
 
     rating = data.get("aggregateRating", {})
     if isinstance(rating, dict) and not venue.rating:

@@ -49,6 +49,15 @@ def _accept_cookies(page) -> None:
             pass
 
 
+def _clean_phone(raw: str) -> str:
+    """Strip Maps icon characters and whitespace from a raw phone string."""
+    # Remove private-use Unicode (Powerline/icon glyphs like )
+    cleaned = re.sub(r"[-]", "", raw)
+    # Keep only digits, spaces, +, -, (, )
+    m = re.search(r"(\+?[\d][\d\s\-\.\(\)]{6,}\d)", cleaned)
+    return m.group(1).strip() if m else ""
+
+
 def _extract_phone(page) -> str:
     """
     Try multiple selector strategies for the phone number in the Maps panel.
@@ -60,8 +69,9 @@ def _extract_phone(page) -> str:
     try:
         for el in page.locator('[data-item-id*="phone"]').all():
             text = el.inner_text(timeout=1000).strip()
-            if text:
-                return text
+            cleaned = _clean_phone(text)
+            if cleaned:
+                return cleaned
     except Exception:
         pass
 
@@ -71,7 +81,7 @@ def _extract_phone(page) -> str:
             label = el.get_attribute("aria-label") or ""
             m = phone_pattern.search(label)
             if m:
-                return m.group(1).strip()
+                return _clean_phone(m.group(1))
     except Exception:
         pass
 
@@ -82,9 +92,9 @@ def _extract_phone(page) -> str:
             text = panel.inner_text(timeout=3000)
             for line in text.splitlines():
                 line = line.strip()
-                m = phone_pattern.match(line)
-                if m and 7 <= len(re.sub(r"\D", "", line)) <= 15:
-                    return line
+                cleaned = _clean_phone(line)
+                if cleaned and 7 <= len(re.sub(r"\D", "", cleaned)) <= 15:
+                    return cleaned
     except Exception:
         pass
 

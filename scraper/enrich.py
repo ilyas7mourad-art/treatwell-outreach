@@ -18,6 +18,7 @@ import argparse
 import csv
 import logging
 import os
+import re
 import random
 import sys
 import time
@@ -169,9 +170,18 @@ def main() -> None:
         logger.info("Step 2/2: Email finder (website crawl)")
         for i, row in enumerate(pending, 1):
             website = row.get("website", "").strip()
-            if not website:
+            # Skip if no website, or if Maps returned a Treatwell *listing* URL
+            # (e.g. treatwell.co.uk/place/slug/) — email won't be there.
+            # mytreatwell.co.uk subdomain pages ARE crawlable booking pages with emails.
+            is_treatwell_listing = re.search(
+                r"https?://(?:www\.)?treatwell\.(co\.uk|fr|com)/place/", website or ""
+            )
+            if not website or is_treatwell_listing:
                 row["email"] = ""
-                logger.debug(f"  [{i}/{len(pending)}] No website for {row.get('name')!r}, skipping email")
+                if website:
+                    logger.debug(f"  [{i}/{len(pending)}] Treatwell URL returned as website for {row.get('name')!r}, skipping")
+                else:
+                    logger.debug(f"  [{i}/{len(pending)}] No website for {row.get('name')!r}, skipping email")
                 continue
 
             logger.info(f"  [{i}/{len(pending)}] Email crawl: {website}")
