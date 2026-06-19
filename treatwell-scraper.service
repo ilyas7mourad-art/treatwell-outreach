@@ -1,0 +1,15 @@
+[Unit]
+Description=Treatwell Barbershop Scraper
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/treatwell-outreach
+ExecStart=/usr/bin/docker compose run --rm scraper
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

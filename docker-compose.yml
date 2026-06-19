@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  scraper:
+    build: .
+    container_name: treatwell-scraper
+    restart: "no"
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./raw_html:/app/raw_html
+    command: ["python", "-m", "scraper.main", "--site", "both"]
