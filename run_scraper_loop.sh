@@ -28,7 +28,7 @@ while true; do
     echo "[1/2] Scraping Treatwell..."
     LATEST_CSV="$WORKDIR/output/leads_${RUN_START}.csv"
     python3 -m scraper.main \
-        --site all \
+        --site fr de nl be ch at it es pt \
         --max-pages 50 \
         --no-raw-html \
         --log-level INFO
