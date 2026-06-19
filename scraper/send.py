@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from .email_sender import send_emails, send_test_email, MAX_DAILY, SEND_DELAY_MIN, SEND_DELAY_MAX
+from .email_sender import send_emails, send_test_email, MAX_DAILY, SEND_DELAY_MIN, SEND_DELAY_MAX, SEQUENCE
 from .utils import setup_logging
 
 
@@ -59,6 +59,11 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Print what would be sent without actually sending",
+    )
+    p.add_argument(
+        "--skip-reply-check",
+        action="store_true",
+        help="Skip IMAP reply detection (useful when IMAP not yet configured)",
     )
     p.add_argument(
         "--log-level",
@@ -109,6 +114,7 @@ def main() -> None:
         delay_min=args.delay_min,
         delay_max=args.delay_max,
         dry_run=args.dry_run,
+        skip_reply_check=args.skip_reply_check,
     )
 
 
