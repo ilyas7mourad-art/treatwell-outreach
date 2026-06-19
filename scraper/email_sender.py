@@ -68,6 +68,11 @@ def _send_one(cfg: dict, to_email: str, shop_name: str) -> None:
         "to":          [{"email": to_email}],
         "subject":     EMAIL_SUBJECT,
         "textContent": EMAIL_BODY_TEMPLATE.format(shop_name=shop_name),
+        # Disable tracking so Brevo doesn't inject a tracking pixel into the
+        # message — that pixel is what triggers HTML_IMAGE_ONLY / MIME_HTML_ONLY
+        # in SpamAssassin.
+        "trackOpens":  0,
+        "trackClicks": 0,
     }
     headers = {
         "api-key":      cfg["api_key"],
