@@ -1,0 +1,18 @@
+[Unit]
+Description=Treatwell Outreach Pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=mourad
+WorkingDirectory=/home/mourad/treatwell-outreach
+ExecStart=/home/mourad/treatwell-outreach/run_pipeline.sh
+StandardOutput=append:/home/mourad/treatwell-outreach/logs/pipeline.log
+StandardError=append:/home/mourad/treatwell-outreach/logs/pipeline.log
+Environment=PYTHONUNBUFFERED=1
+# Give the full pipeline (scrape + enrich + send) up to 4 hours
+TimeoutStartSec=14400
+
+[Install]
+WantedBy=multi-user.target
