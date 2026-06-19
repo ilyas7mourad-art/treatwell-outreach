@@ -31,9 +31,9 @@ SEND_DELAY_MAX = 180
 EMAIL_SUBJECT = "Your booking site"
 
 EMAIL_BODY_TEMPLATE = """\
-Hey {shop_name}, saw you on Treatwell — your shop looks clean.
+Hey {shop_name}, saw you on Treatwell - your shop looks clean.
 
-Quick thing — Treatwell takes a cut of every booking you get through them. I build custom booking sites for barbers: your own domain, deposit collection, auto reminders, you keep 100% of payments.
+Quick thing - Treatwell takes a cut of every booking you get through them. I build custom booking sites for barbers: your own domain, deposit collection, auto reminders, you keep 100% of payments.
 
 One time fee, no monthly charges.
 
@@ -81,17 +81,16 @@ def _connect_smtp(cfg: dict) -> smtplib.SMTP:
 def _send_one(server: smtplib.SMTP, cfg: dict, to_email: str, shop_name: str) -> None:
     body = EMAIL_BODY_TEMPLATE.format(shop_name=shop_name)
 
-    # Pure text/plain — no multipart, no HTML part. MIMEMultipart("alternative")
-    # triggers MIME_HTML_ONLY / HTML_IMAGE_ONLY in SpamAssassin even with a single
-    # plain-text attachment because the MIME envelope looks like it's hiding content.
-    msg = MIMEText(body, "plain", "utf-8")
+    # us-ascii charset forces Content-Transfer-Encoding: 7bit — the body is sent
+    # verbatim over the wire with no encoding layer. utf-8 would trigger base64,
+    # which Brevo's relay re-interprets and may rewrap as HTML. The template uses
+    # ASCII-only characters so us-ascii is safe here.
+    msg = MIMEText(body, "plain", "us-ascii")
     msg["Subject"] = EMAIL_SUBJECT
-    # Both From header and MAIL FROM envelope must use the same domain to avoid
-    # HEADER_FROM_DIFFERENT_DOMAINS. Brevo authenticates with the SMTP login but
-    # sends on behalf of sender_email — these must match what's verified in Brevo.
     msg["From"] = f"{cfg['sender_name']} <{cfg['sender_email']}>"
     msg["To"] = to_email
 
+    # Envelope MAIL FROM matches From header domain — same address both places.
     server.sendmail(cfg["sender_email"], [to_email], msg.as_string())
 
 
