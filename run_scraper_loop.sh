@@ -6,7 +6,7 @@ set -euo pipefail
 
 WORKDIR="/home/mma/treatwell-outreach"
 MASTER="$WORKDIR/output/leads_master.csv"
-SLEEP_SECONDS=3600   # 1 hour between scrape runs
+SLEEP_SECONDS=300    # 5 min between runs (scraping takes hours so this is mostly a restart buffer)
 
 cd "$WORKDIR"
 mkdir -p "$WORKDIR/output" "$WORKDIR/logs"
@@ -29,8 +29,13 @@ while true; do
     LATEST_CSV="$WORKDIR/output/leads_${RUN_START}.csv"
     python3 -m scraper.main \
         --site uk \
-        --cities london manchester \
-        --max-pages 5 \
+        --cities london manchester birmingham leeds glasgow liverpool edinburgh \
+                bristol sheffield newcastle nottingham leicester cardiff \
+                brighton coventry bradford reading oxford cambridge york \
+                southampton portsmouth wolverhampton derby hull exeter \
+                norwich stoke-on-trent middlesbrough sunderland aberdeen \
+                dundee swansea belfast \
+        --max-pages 50 \
         --no-raw-html \
         --log-level INFO
 
