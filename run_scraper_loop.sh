@@ -28,13 +28,7 @@ while true; do
     echo "[1/2] Scraping Treatwell..."
     LATEST_CSV="$WORKDIR/output/leads_${RUN_START}.csv"
     python3 -m scraper.main \
-        --site uk \
-        --cities london manchester birmingham leeds glasgow liverpool edinburgh \
-                bristol sheffield newcastle nottingham leicester cardiff \
-                brighton coventry bradford reading oxford cambridge york \
-                southampton portsmouth wolverhampton derby hull exeter \
-                norwich stoke-on-trent middlesbrough sunderland aberdeen \
-                dundee swansea belfast \
+        --site all \
         --max-pages 50 \
         --no-raw-html \
         --log-level INFO

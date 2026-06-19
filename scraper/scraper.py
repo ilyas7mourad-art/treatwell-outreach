@@ -1,10 +1,12 @@
 """
-Treatwell barbershop scraper — UK (treatwell.co.uk) and FR (treatwell.fr).
+Treatwell barbershop scraper — UK + 9 European countries.
 
-Listing pages are server-side rendered HTML. Falls back to Playwright for
-pages that return near-empty bodies (JS-gated responses).
+UK uses requests (SSR). All other Treatwell sites are JS-rendered and use
+Playwright for listing pages; detail pages are fetched with requests (JSON-LD
+is embedded in the HTML source regardless of rendering mode).
 """
 
+import atexit
 import logging
 import re
 from dataclasses import dataclass, field, asdict
@@ -25,48 +27,217 @@ logger = logging.getLogger("treatwell")
 SITES = {
     "uk": {
         "base": "https://www.treatwell.co.uk",
-        "listing_pattern": "/places/treatment-group-hair/at-barbershop/offer-type-local/in-{city}-uk/page-{page}/",
+        "country": "UK",
+        "use_playwright": False,
+        "venue_re": r"/place/([^/?&#]+)",
+        "venue_path": "/place/",
         "listing_first_page": "/places/treatment-group-hair/at-barbershop/offer-type-local/in-{city}-uk/",
+        "listing_pattern": "/places/treatment-group-hair/at-barbershop/offer-type-local/in-{city}-uk/page-{page}/",
         "cities": [
             "london", "manchester", "birmingham", "leeds", "glasgow",
-            "sheffield", "bradford", "liverpool", "edinburgh", "bristol",
-            "cardiff", "leicester", "nottingham", "coventry", "newcastle",
+            "liverpool", "edinburgh", "bristol", "sheffield", "newcastle",
+            "nottingham", "leicester", "cardiff", "brighton", "coventry",
+            "bradford", "reading", "oxford", "cambridge", "york",
+            "southampton", "portsmouth", "wolverhampton", "derby", "hull",
+            "exeter", "norwich", "stoke-on-trent", "middlesbrough",
+            "sunderland", "aberdeen", "dundee", "swansea", "belfast",
         ],
     },
     "fr": {
         "base": "https://www.treatwell.fr",
-        "listing_pattern": "/salons/chez-barbier/offre-type-local/dans-{city}-france/page-{page}/",
+        "country": "FR",
+        "use_playwright": True,
+        "venue_re": r"/salon/([^/?&#]+)",
+        "venue_path": "/salon/",
         "listing_first_page": "/salons/chez-barbier/offre-type-local/dans-{city}-france/",
+        "listing_pattern": "/salons/chez-barbier/offre-type-local/dans-{city}-france/page-{page}/",
         "cities": [
-            "paris", "lyon", "marseille", "bordeaux", "nantes",
-            "toulouse", "nice", "strasbourg", "lille", "rennes",
+            "paris", "lyon", "marseille", "toulouse", "bordeaux",
+            "lille", "nice", "nantes", "strasbourg", "rennes",
+            "montpellier", "grenoble", "tours", "dijon", "angers",
+            "caen", "saint-etienne", "rouen", "amiens", "clermont-ferrand",
+            "metz", "besancon", "perpignan", "brest", "limoges",
+            "nimes", "toulon", "villeurbanne", "aix-en-provence", "reims",
+        ],
+    },
+    "de": {
+        "base": "https://www.treatwell.de",
+        "country": "DE",
+        "use_playwright": True,
+        "venue_re": r"/ort/([^/?&#]+)",
+        "venue_path": "/ort/",
+        "listing_first_page": "/orte/bei-barber-shop/in-{city}-de/",
+        "listing_pattern": "/orte/bei-barber-shop/in-{city}-de/seite-{page}/",
+        "cities": [
+            "berlin", "hamburg", "munich", "cologne", "frankfurt",
+            "stuttgart", "dusseldorf", "dortmund", "essen", "leipzig",
+            "bremen", "dresden", "hannover", "nuremberg", "duisburg",
+            "bochum", "wuppertal", "bielefeld", "bonn", "mannheim",
+            "karlsruhe", "augsburg", "wiesbaden", "gelsenkirchen", "munster",
+            "aachen", "braunschweig", "kiel", "chemnitz", "magdeburg",
+            "halle", "freiburg", "erfurt", "rostock", "mainz",
+            "lubeck", "oberhausen", "kassel", "saarbrucken", "potsdam",
+        ],
+    },
+    "nl": {
+        "base": "https://www.treatwell.nl",
+        "country": "NL",
+        "use_playwright": True,
+        "venue_re": r"/salon/([^/?&#]+)",
+        "venue_path": "/salon/",
+        "listing_first_page": "/salons/bij-barbershop/in-{city}-nl/",
+        "listing_pattern": "/salons/bij-barbershop/in-{city}-nl/pagina-{page}/",
+        "cities": [
+            "amsterdam", "rotterdam", "den-haag", "utrecht", "eindhoven",
+            "tilburg", "groningen", "almere", "breda", "nijmegen",
+            "haarlem", "arnhem", "zaandam", "amersfoort", "dordrecht",
+            "leiden", "zwolle", "maastricht", "delft", "alkmaar",
+            "deventer", "helmond", "enschede", "apeldoorn", "leeuwarden",
+        ],
+    },
+    "be": {
+        "base": "https://www.treatwell.be",
+        "country": "BE",
+        "use_playwright": True,
+        "venue_re": r"/salon/([^/?&#]+)",
+        "venue_path": "/salon/",
+        "listing_first_page": "/salons/in-{city}-be/",
+        "listing_pattern": "/salons/in-{city}-be/pagina-{page}/",
+        "cities": [
+            "brussel", "antwerpen", "gent", "brugge", "liege",
+            "namur", "leuven", "aalst", "mechelen", "hasselt",
+            "kortrijk", "ostend", "genk", "mons", "louvain",
+        ],
+    },
+    "ch": {
+        "base": "https://www.treatwell.ch",
+        "country": "CH",
+        "use_playwright": True,
+        "venue_re": r"/ort/([^/?&#]+)",
+        "venue_path": "/ort/",
+        "listing_first_page": "/orte/bei-barber-shop/in-{city}-ch/",
+        "listing_pattern": "/orte/bei-barber-shop/in-{city}-ch/seite-{page}/",
+        "cities": [
+            "zuerich", "geneve", "basel", "bern", "lausanne",
+            "winterthur", "luzern", "st-gallen", "lugano", "biel",
+            "thun", "bellinzona", "fribourg", "schaffhausen", "chur",
+        ],
+    },
+    "at": {
+        "base": "https://www.treatwell.at",
+        "country": "AT",
+        "use_playwright": True,
+        "venue_re": r"/ort/([^/?&#]+)",
+        "venue_path": "/ort/",
+        "listing_first_page": "/orte/bei-barber-shop/in-{city}-at/",
+        "listing_pattern": "/orte/bei-barber-shop/in-{city}-at/seite-{page}/",
+        "cities": [
+            "wien", "graz", "linz", "salzburg", "innsbruck",
+            "klagenfurt", "villach", "wels", "st-polten", "dornbirn",
+        ],
+    },
+    "it": {
+        "base": "https://www.treatwell.it",
+        "country": "IT",
+        "use_playwright": True,
+        "venue_re": r"/salone/([^/?&#]+)",
+        "venue_path": "/salone/",
+        "listing_first_page": "/saloni/in-{city}-it/",
+        "listing_pattern": "/saloni/in-{city}-it/pagina-{page}/",
+        "cities": [
+            "milano", "roma", "napoli", "torino", "palermo",
+            "genova", "bologna", "firenze", "bari", "catania",
+            "venezia", "verona", "padova", "trieste", "brescia",
+            "bergamo", "modena", "parma", "reggio-emilia", "perugia",
+            "livorno", "cagliari", "messina", "taranto", "rimini",
+            "salerno", "ferrara", "pisa", "ancona", "bologna",
+        ],
+    },
+    "es": {
+        "base": "https://www.treatwell.es",
+        "country": "ES",
+        "use_playwright": True,
+        "venue_re": r"/establecimiento/([^/?&#]+)",
+        "venue_path": "/establecimiento/",
+        "listing_first_page": "/establecimientos/en-{city}-es/",
+        "listing_pattern": "/establecimientos/en-{city}-es/pagina-{page}/",
+        "cities": [
+            "madrid", "barcelona", "sevilla", "valencia", "bilbao",
+            "malaga", "zaragoza", "murcia", "palma", "alicante",
+            "cordoba", "valladolid", "vigo", "gijon", "granada",
+            "elche", "hospitalet-de-llobregat", "terrassa", "badalona",
+            "sabadell", "cartagena", "jerez-de-la-frontera", "pamplona",
+            "donostia-san-sebastian", "almeria", "santander", "burgos",
+        ],
+    },
+    "pt": {
+        "base": "https://www.treatwell.pt",
+        "country": "PT",
+        "use_playwright": True,
+        "venue_re": r"/estabelecimento/([^/?&#]+)",
+        "venue_path": "/estabelecimento/",
+        "listing_first_page": "/estabelecimentos/oferta-tipolocal/em-{city}/",
+        "listing_pattern": "/estabelecimentos/oferta-tipolocal/em-{city}/pagina-{page}/",
+        "cities": [
+            "lisboa", "porto", "braga", "coimbra", "setubal",
+            "funchal", "aveiro", "viseu", "leiria", "evora",
+            "faro", "guimaraes", "viana-do-castelo", "castelo-branco", "beja",
         ],
     },
 }
 
-MIN_BODY_LENGTH = 5_000  # bytes — below this we assume JS block / bot detection
+MIN_BODY_LENGTH = 5_000
+
+# ---------------------------------------------------------------------------
+# Playwright browser — lazy singleton, closed at process exit
+# ---------------------------------------------------------------------------
+
+_pw_instance = None
+_pw_browser = None
 
 
-@dataclass
-class Venue:
-    site: str = ""
-    country: str = ""
-    city: str = ""
-    name: str = ""
-    address: str = ""
-    rating: str = ""
-    review_count: str = ""
-    booking_url: str = ""
-    treatwell_slug: str = ""
-    services_preview: str = ""
-    source_listing_url: str = ""
+def _get_pw_browser():
+    global _pw_instance, _pw_browser
+    if _pw_browser is None:
+        from playwright.sync_api import sync_playwright
+        _pw_instance = sync_playwright().__enter__()
+        _pw_browser = _pw_instance.chromium.launch(headless=True)
+        atexit.register(_close_pw_browser)
+    return _pw_browser
 
-    def to_dict(self) -> dict:
-        return asdict(self)
+
+def _close_pw_browser():
+    global _pw_instance, _pw_browser
+    if _pw_browser:
+        try:
+            _pw_browser.close()
+        except Exception:
+            pass
+        _pw_browser = None
+    if _pw_instance:
+        try:
+            _pw_instance.__exit__(None, None, None)
+        except Exception:
+            pass
+        _pw_instance = None
+
+
+def fetch_html_playwright(url: str) -> str | None:
+    try:
+        browser = _get_pw_browser()
+        page = browser.new_page()
+        try:
+            page.goto(url, wait_until="networkidle", timeout=25000)
+            return page.content()
+        finally:
+            page.close()
+    except Exception as exc:
+        logger.error(f"Playwright error for {url}: {exc}")
+        return None
 
 
 # ---------------------------------------------------------------------------
-# HTTP session helpers
+# Requests-based fetch (used for UK listing pages + all detail pages)
 # ---------------------------------------------------------------------------
 
 def make_session() -> requests.Session:
@@ -94,7 +265,7 @@ def fetch_html(session: requests.Session, url: str, retries: int = 3) -> str | N
                 logger.warning(f"HTTP {resp.status_code} for {url}")
                 return None
             if len(resp.text) < MIN_BODY_LENGTH:
-                logger.warning(f"Suspiciously short response ({len(resp.text)} chars) for {url}")
+                logger.warning(f"Short response ({len(resp.text)} chars) for {url}")
                 if attempt < retries:
                     random_delay(8, 15)
                     continue
@@ -108,28 +279,47 @@ def fetch_html(session: requests.Session, url: str, retries: int = 3) -> str | N
 
 
 # ---------------------------------------------------------------------------
+# Venue dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Venue:
+    site: str = ""
+    country: str = ""
+    city: str = ""
+    name: str = ""
+    address: str = ""
+    rating: str = ""
+    review_count: str = ""
+    booking_url: str = ""
+    treatwell_slug: str = ""
+    services_preview: str = ""
+    source_listing_url: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# ---------------------------------------------------------------------------
 # Listing page parser
 # ---------------------------------------------------------------------------
 
 def parse_listing_page(html: str, site_key: str, city: str, listing_url: str) -> list[Venue]:
-    """Extract venue cards from a listing page."""
     soup = BeautifulSoup(html, "lxml")
     venues: list[Venue] = []
 
-    base_url = SITES[site_key]["base"]
-    country = "UK" if site_key == "uk" else "FR"
-
-    # Treatwell renders each card as a full <a> tag with an absolute URL.
-    # href looks like: https://www.treatwell.co.uk/place/{slug}/?serviceIds=...
-    # We match on the path segment only (after stripping the domain and query).
-    place_re = re.compile(r"/place/([^/?&#]+)")
+    config = SITES[site_key]
+    base_url = config["base"]
+    country = config["country"]
+    venue_re = re.compile(config["venue_re"])
+    venue_path = config["venue_path"]
 
     seen_slugs: set[str] = set()
 
     for a_tag in soup.find_all("a", href=True):
         href: str = a_tag["href"]
 
-        m = place_re.search(href)
+        m = venue_re.search(href)
         if not m:
             continue
 
@@ -138,8 +328,7 @@ def parse_listing_page(html: str, site_key: str, city: str, listing_url: str) ->
             continue
         seen_slugs.add(slug)
 
-        # Clean booking URL: strip query params so the slug is the canonical link
-        clean_url = f"{base_url}/place/{slug}/"
+        clean_url = f"{base_url}{venue_path}{slug}/"
 
         v = Venue(
             site=site_key,
@@ -150,34 +339,26 @@ def parse_listing_page(html: str, site_key: str, city: str, listing_url: str) ->
             source_listing_url=listing_url,
         )
 
-        # ── Name ─────────────────────────────────────────────────────────────
-        # Observed: <h2 class="Text-module_mdHeader__...">Venue Name</h2>
         name_el = a_tag.find("h2")
         if name_el:
             v.name = name_el.get_text(strip=True)
         else:
-            # fallback: first non-trivial text string in the card
             for s in a_tag.strings:
                 clean = s.strip()
                 if clean and len(clean) > 3:
                     v.name = clean
                     break
 
-        # ── Rating ───────────────────────────────────────────────────────────
-        # Observed: <span class="...Rating-module_label...">4.9</span>
         rating_el = a_tag.find("span", class_=re.compile(r"Rating-module_label|rating.*label|note", re.I))
         if rating_el:
             v.rating = rating_el.get_text(strip=True)
         else:
-            # regex fallback on card text
             card_text = a_tag.get_text(separator="\n")
             rm = re.search(r"\b([45]\.[0-9]|[45],[0-9])\b", card_text)
             if rm:
                 v.rating = rm.group(1).replace(",", ".")
 
-        # ── Review count ─────────────────────────────────────────────────────
-        # Observed: <span class="...BrowseResultRating-module--label...">1267 reviews</span>
-        review_el = a_tag.find("span", class_=re.compile(r"BrowseResultRating|review|avis", re.I))
+        review_el = a_tag.find("span", class_=re.compile(r"BrowseResultRating|review|avis|bewertung", re.I))
         if review_el:
             rev_text = review_el.get_text(strip=True)
             m2 = re.search(r"([\d,]+)", rev_text)
@@ -185,11 +366,10 @@ def parse_listing_page(html: str, site_key: str, city: str, listing_url: str) ->
                 v.review_count = m2.group(1).replace(",", "")
         else:
             card_text = a_tag.get_text(separator="\n")
-            m2 = re.search(r"([\d,]+)\s*(?:reviews?|avis)", card_text, re.I)
+            m2 = re.search(r"([\d,]+)\s*(?:reviews?|avis|bewertung)", card_text, re.I)
             if m2:
                 v.review_count = m2.group(1).replace(",", "")
 
-        # ── Services preview ─────────────────────────────────────────────────
         card_text = a_tag.get_text(separator="\n")
         price_lines = [
             line.strip() for line in card_text.splitlines()
@@ -204,22 +384,18 @@ def parse_listing_page(html: str, site_key: str, city: str, listing_url: str) ->
 
 
 # ---------------------------------------------------------------------------
-# Venue detail page parser
+# Venue detail page parser (requests-based for all countries)
 # ---------------------------------------------------------------------------
 
 def parse_venue_page(html: str, venue: Venue) -> Venue:
-    """Enrich a Venue with data from its detail page."""
     import json as _json
     soup = BeautifulSoup(html, "lxml")
 
-    # JSON-LD is the most reliable source — parse it first.
-    # Treatwell uses {"@context":..., "@graph":[...]} wrapping.
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = _json.loads(script.string or "")
             candidates = []
             if isinstance(data, dict):
-                # Unwrap @graph if present
                 candidates = data.get("@graph", [data])
             elif isinstance(data, list):
                 candidates = data
@@ -229,7 +405,6 @@ def parse_venue_page(html: str, venue: Venue) -> Venue:
         except Exception:
             pass
 
-    # Fallback: h1 for name if JSON-LD didn't give us one
     if not venue.name:
         tag = soup.find("h1")
         if tag:
@@ -239,7 +414,6 @@ def parse_venue_page(html: str, venue: Venue) -> Venue:
 
 
 def _extract_jsonld(data: dict, venue: Venue) -> None:
-    """Pull fields from a JSON-LD object into the venue."""
     if data.get("name") and not venue.name:
         venue.name = data["name"]
 
@@ -265,17 +439,14 @@ def _extract_jsonld(data: dict, venue: Venue) -> None:
 def scrape_site(
     site_key: str,
     cities: list[str] | None = None,
-    max_pages: int = 9,
+    max_pages: int = 50,
     delay_min: float = 2.0,
     delay_max: float = 5.0,
     save_html: bool = True,
 ) -> Generator[Venue, None, None]:
-    """
-    Yield Venue objects for all barbershops found across listing pages,
-    then enrich each with a detail-page request.
-    """
     config = SITES[site_key]
     base = config["base"]
+    use_playwright = config["use_playwright"]
     target_cities = cities or config["cities"]
     session = make_session()
 
@@ -291,7 +462,11 @@ def scrape_site(
             url = urljoin(base, path)
             logger.info(f"  Listing page {page}: {url}")
 
-            html = fetch_html(session, url)
+            if use_playwright:
+                html = fetch_html_playwright(url)
+            else:
+                html = fetch_html(session, url)
+
             if not html:
                 logger.warning(f"  No HTML for {url}, stopping pagination for {city}")
                 break
@@ -308,6 +483,7 @@ def scrape_site(
 
             for venue in venues:
                 random_delay(delay_min, delay_max)
+                # Detail pages use requests for all countries (JSON-LD is in HTML source)
                 detail_html = fetch_html(session, venue.booking_url)
                 if detail_html:
                     if save_html:
@@ -316,7 +492,10 @@ def scrape_site(
                 else:
                     logger.warning(f"  Could not fetch detail page: {venue.booking_url}")
 
-                logger.info(f"  -> {venue.name!r} | {venue.city} | {venue.rating} | {venue.address[:40] if venue.address else 'no address'}")
+                logger.info(
+                    f"  -> {venue.name!r} | {venue.city} | {venue.rating} | "
+                    f"{venue.address[:40] if venue.address else 'no address'}"
+                )
                 yield venue
 
             random_delay(delay_min, delay_max)

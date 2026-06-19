@@ -3,9 +3,10 @@
 Treatwell Barbershop Scraper — entry point.
 
 Usage:
+    python -m scraper.main --site uk
+    python -m scraper.main --site uk fr de
+    python -m scraper.main --site all
     python -m scraper.main --site uk --cities london manchester --max-pages 5
-    python -m scraper.main --site fr --cities paris lyon
-    python -m scraper.main --site both  # scrape all cities on both sites
 """
 
 import argparse
@@ -26,11 +27,12 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Scrape Treatwell barbershop listings and export leads."
     )
+    all_site_keys = list(SITES.keys())
     p.add_argument(
         "--site",
-        choices=["uk", "fr", "both"],
-        default="uk",
-        help="Which Treatwell site(s) to scrape (default: uk)",
+        nargs="+",
+        default=["uk"],
+        help=f"Site(s) to scrape: {all_site_keys} or 'all' (default: uk)",
     )
     p.add_argument(
         "--cities",
@@ -88,7 +90,10 @@ def main() -> None:
     logger.info(f"Site(s): {args.site} | Max pages: {args.max_pages} | "
                 f"Delay: {args.delay_min}-{args.delay_max}s")
 
-    sites_to_run = ["uk", "fr"] if args.site == "both" else [args.site]
+    if args.site == ["all"] or args.site == "all":
+        sites_to_run = list(SITES.keys())
+    else:
+        sites_to_run = args.site
 
     all_venues = []
     for site_key in sites_to_run:
