@@ -12,3 +12,20 @@ services:
       - ./logs:/app/logs
       - ./raw_html:/app/raw_html
     command: ["python", "-m", "scraper.main", "--site", "both"]
+
+  enricher:
+    build: .
+    container_name: treatwell-enricher
+    restart: "no"
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+      - ./logs:/app/logs
+    # Replace the CSV filename below with your actual scraper output
+    command: >
+      python -m scraper.enrich
+      --input /app/output/leads_latest.csv
+      --resume
+    # Playwright needs /dev/shm for Chromium shared memory
+    shm_size: "512m"

@@ -2,7 +2,22 @@
 
 Automated scraper for barbershop listings on Treatwell UK and FR. Exports leads to CSV and Google Sheets for cold email outreach.
 
+## Pipeline overview
+
+```
+treatwell.co.uk / .fr  ──►  scraper  ──►  leads.csv
+                                               │
+                                          enricher
+                                         /        \
+                               Google Maps      website crawl
+                              (phone + website)  (email)
+                                               │
+                                      leads_enriched.csv
+```
+
 ## What it collects
+
+### Step 1 — Treatwell scraper
 
 | Field | Source |
 |---|---|
@@ -12,10 +27,18 @@ Automated scraper for barbershop listings on Treatwell UK and FR. Exports leads 
 | `address` | Venue detail page |
 | `rating` | Listing card |
 | `review_count` | Listing card |
-| `booking_url` | Listing card (their Treatwell page = their current booking platform) |
-| `services_preview` | Listing card (sample services + prices) |
+| `booking_url` | Listing card (their current booking platform URL) |
+| `services_preview` | Listing card |
 
-> **Note**: Treatwell hides direct phone/email. The `booking_url` is the key field — it proves they use Treatwell, which is the hook for your outreach pitch.
+### Step 2 — Enricher (Google Maps + website crawl)
+
+| Field | Source |
+|---|---|
+| `phone` | Google Maps business panel |
+| `website` | Google Maps business panel |
+| `email` | Business website (homepage → /contact → /about) |
+| `maps_url` | Google Maps permalink |
+| `enrich_status` | `found` / `not_found` / `error` / `skipped` |
 
 ## Quick start (local)
 
@@ -36,7 +59,30 @@ python -m scraper.main --site both
 
 Output: `output/leads_YYYYMMDD_HHMMSS.csv`
 
+### Step 2 — Enrich with phone + email
+
+```bash
+# Install Playwright browser (once)
+playwright install chromium
+
+# Enrich all leads in a CSV
+python -m scraper.enrich --input output/leads_20240101_120000.csv
+
+# Resume after a crash (skips rows that already have enrich_status)
+python -m scraper.enrich --input output/leads.csv --resume
+
+# Skip Maps step (email-only, if you already have websites)
+python -m scraper.enrich --input output/leads.csv --skip-maps
+
+# First 50 rows only (for testing)
+python -m scraper.enrich --input output/leads.csv --limit 50
+```
+
+Output: `output/leads_YYYYMMDD_HHMMSS_enriched.csv`
+
 ## CLI options
+
+### Scraper (`python -m scraper.main`)
 
 ```
 --site          uk | fr | both (default: uk)
@@ -48,6 +94,21 @@ Output: `output/leads_YYYYMMDD_HHMMSS.csv`
 --no-raw-html   Skip saving raw HTML (saves disk space)
 --sheets        Also push to Google Sheets (requires .env config)
 --log-level     DEBUG | INFO | WARNING | ERROR
+```
+
+### Enricher (`python -m scraper.enrich`)
+
+```
+--input           Path to input leads CSV (required)
+--output          Output path (default: input_enriched.csv)
+--limit           Only process first N rows
+--resume          Skip rows already enriched (safe to restart)
+--skip-maps       Skip Google Maps step
+--maps-only       Skip email crawl step
+--no-headless     Show browser window (useful for debugging Maps)
+--maps-delay-min  Min seconds between Maps searches (default: 4)
+--maps-delay-max  Max seconds between Maps searches (default: 9)
+--log-level       DEBUG | INFO | WARNING | ERROR
 ```
 
 ## Google Sheets export
