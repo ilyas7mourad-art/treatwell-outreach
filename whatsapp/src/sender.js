@@ -77,6 +77,17 @@ export async function startWorker(dryRun = false) {
 
     try {
       const sock = await getSocket();
+
+      // Verify number is on WhatsApp — also pre-establishes the Signal session
+      // so the recipient doesn't see "waiting for this message"
+      const [onWA] = await sock.onWhatsApp(jid);
+      if (!onWA?.exists) {
+        log.warn({ lead_id: job.lead_id, jid }, 'Not on WhatsApp — skipping');
+        logSend({ leadId: job.lead_id, phone: jid, status: 'failed', error: 'not_on_whatsapp' });
+        markFailed(job.id, 'not_on_whatsapp');
+        continue;
+      }
+
       await sock.sendMessage(jid, { text: message });
 
       logSend({
