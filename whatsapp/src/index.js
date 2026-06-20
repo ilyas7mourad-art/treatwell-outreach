@@ -27,7 +27,14 @@ async function main() {
 
     // ── START ──────────────────────────────────────────────────────────
     case 'start': {
-      // Auto-import latest CSV and rebuild queue before starting
+      // Reset any 'processing' jobs left from a previous crashed run
+      const db = getDb();
+      const reset = db.prepare(
+        "UPDATE wa_queue SET status='pending', attempts=attempts-1 WHERE status='processing'"
+      ).run();
+      if (reset.changes) log.info({ reset: reset.changes }, 'Reset stale processing jobs');
+
+      // Auto-import latest CSV and rebuild queue
       log.info('Importing leads from CSV…');
       await importLeads();
 
@@ -35,8 +42,8 @@ async function main() {
       const added = buildQueue();
       log.info({ added, total: pendingCount() }, 'Queue ready');
 
-      // Connect WhatsApp (shows QR on first run)
-      log.info('Connecting to WhatsApp…');
+      // Connect WhatsApp — getSocket() waits until 'open' before resolving
+      log.info('Connecting to WhatsApp… (QR code will appear below if not yet authenticated)');
       await getSocket();
 
       // Handle SIGINT / SIGTERM gracefully
