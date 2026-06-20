@@ -1,7 +1,7 @@
 import { getSocket, toJid } from './auth.js';
 import { checkLimit, recordSent, triggerPause, randomDelayMs } from './ratelimit.js';
 import { pickTemplateFor, render } from './templates.js';
-import { nextJob, markDone, markFailed, pendingCount } from './queue.js';
+import { nextJob, markDone, markFailed, pendingCount, buildQueue } from './queue.js';
 import { logSend, log } from './logger.js';
 
 // Error patterns that suggest WA is rate-limiting or banning us
@@ -51,8 +51,15 @@ export async function startWorker(dryRun = false) {
 
     const job = nextJob();
     if (!job) {
-      log.info('Queue empty — worker idle');
-      break;
+      // Check for newly eligible follow-ups before sleeping
+      const added = buildQueue();
+      if (added.total > 0) {
+        log.info(added, 'New follow-ups queued');
+        continue;
+      }
+      log.info('Queue empty — sleeping 1h then re-checking for follow-ups');
+      await sleep(3_600_000);
+      continue;
     }
 
     const jid = toJid(job.phone);
@@ -62,7 +69,7 @@ export async function startWorker(dryRun = false) {
       continue;
     }
 
-    const template = pickTemplateFor(job.lead_id);
+    const template = pickTemplateFor(job.lead_id, job.follow_up_num ?? 0);
     const message  = render(template, job);
 
     log.info(
@@ -97,10 +104,11 @@ export async function startWorker(dryRun = false) {
       await sock.sendMessage(jid, { text: message });
 
       logSend({
-        leadId:     job.lead_id,
-        templateId: template.id,
-        phone:      jid,
-        status:     'sent',
+        leadId:      job.lead_id,
+        templateId:  template.id,
+        phone:       jid,
+        status:      'sent',
+        followUpNum: job.follow_up_num ?? 0,
       });
 
       recordSent();
@@ -114,13 +122,13 @@ export async function startWorker(dryRun = false) {
       if (looksBanned(err)) {
         const resumeAt = triggerPause('send_error');
         log.error({ resumeAt }, 'Ban/rate-limit signal — pausing for 24h');
-        logSend({ leadId: job.lead_id, phone: jid, status: 'failed', error: err.message });
+        logSend({ leadId: job.lead_id, phone: jid, status: 'failed', error: err.message, followUpNum: job.follow_up_num ?? 0 });
         markFailed(job.id, err.message);
         await sleep(5_000);
         continue;
       }
 
-      logSend({ leadId: job.lead_id, phone: jid, status: 'failed', error: err.message });
+      logSend({ leadId: job.lead_id, phone: jid, status: 'failed', error: err.message, followUpNum: job.follow_up_num ?? 0 });
       markFailed(job.id, err.message);
     }
 

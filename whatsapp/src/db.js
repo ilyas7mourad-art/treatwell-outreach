@@ -54,25 +54,27 @@ function migrate(db) {
     );
 
     CREATE TABLE IF NOT EXISTS sends (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      lead_id     INTEGER NOT NULL REFERENCES leads(id),
-      channel     TEXT NOT NULL CHECK(channel IN ('whatsapp','email','sms')),
-      template_id INTEGER REFERENCES templates(id),
-      phone       TEXT,
-      sent_at     TEXT DEFAULT (datetime('now')),
-      status      TEXT DEFAULT 'sent' CHECK(status IN ('sent','failed','delivered')),
-      error       TEXT
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      lead_id        INTEGER NOT NULL REFERENCES leads(id),
+      channel        TEXT NOT NULL CHECK(channel IN ('whatsapp','email','sms')),
+      template_id    INTEGER REFERENCES templates(id),
+      phone          TEXT,
+      sent_at        TEXT DEFAULT (datetime('now')),
+      status         TEXT DEFAULT 'sent' CHECK(status IN ('sent','failed','delivered')),
+      error          TEXT,
+      follow_up_num  INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS wa_queue (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      lead_id      INTEGER NOT NULL REFERENCES leads(id),
-      status       TEXT DEFAULT 'pending'
-                   CHECK(status IN ('pending','processing','done','failed','skipped')),
-      scheduled_at TEXT DEFAULT (datetime('now')),
-      attempts     INTEGER DEFAULT 0,
-      last_error   TEXT,
-      created_at   TEXT DEFAULT (datetime('now'))
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      lead_id        INTEGER NOT NULL REFERENCES leads(id),
+      follow_up_num  INTEGER DEFAULT 0,
+      status         TEXT DEFAULT 'pending'
+                     CHECK(status IN ('pending','processing','done','failed','skipped')),
+      scheduled_at   TEXT DEFAULT (datetime('now')),
+      attempts       INTEGER DEFAULT 0,
+      last_error     TEXT,
+      created_at     TEXT DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS rate_state (
@@ -90,9 +92,20 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_queue_status  ON wa_queue(status, scheduled_at);
   `);
 
+  // Migrate existing DBs — add columns added after initial deploy
+  for (const sql of [
+    'ALTER TABLE sends    ADD COLUMN follow_up_num INTEGER DEFAULT 0',
+    'ALTER TABLE wa_queue ADD COLUMN follow_up_num INTEGER DEFAULT 0',
+  ]) {
+    try { db.exec(sql); } catch {}
+  }
+
   // Seed templates on first run
   const n = db.prepare('SELECT COUNT(*) as n FROM templates').get().n;
   if (n === 0) seedTemplates(db);
+
+  // Seed follow-up templates if missing
+  seedFollowUpTemplates(db);
 }
 
 function seedTemplates(db) {
@@ -125,4 +138,20 @@ ilyas`],
 ilyas`],
   ];
   for (const [variant, body] of templates) insert.run(variant, body);
+}
+
+function seedFollowUpTemplates(db) {
+  const insert = db.prepare('INSERT OR IGNORE INTO templates (variant, body) VALUES (?, ?)');
+  const followUps = [
+    ['FU1', `hey just checking if you saw my last message about {business_name} i know its a lot of messages but genuinely think this could save you a decent amount every month worth 5 mins of your time
+
+ilyas`],
+    ['FU2', `hey me again just wanted to leave this here in case it got buried treatwell are taking money from every single booking you get through them i can build you a site so that stops happening one payment thats it
+
+ilyas`],
+    ['FU3', `last one i promise just wanted to reach out one more time if youre ever thinking about cutting out treatwell im your guy no pressure
+
+ilyas`],
+  ];
+  for (const [variant, body] of followUps) insert.run(variant, body);
 }

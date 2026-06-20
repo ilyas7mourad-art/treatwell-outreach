@@ -1,54 +1,84 @@
 import { getDb } from './db.js';
 
-// Enqueue all eligible UK leads that haven't been WhatsApp-messaged this week.
+const FU_DAYS = [0, 3, 6, 9]; // day offsets for initial + 3 follow-ups
+
+// Build/refresh the queue — call on startup and when queue runs dry.
+// Returns counts of newly added jobs per follow-up level.
 export function buildQueue() {
   const db = getDb();
-
-  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
-
-  // Find leads eligible for WhatsApp outreach:
-  //   - UK, has phone, not DNC
-  //   - not already queued (pending/done this week)
-  //   - not already sent on WhatsApp this week
-  //   - phone not already contacted (catches same number across multiple locations)
-  const eligible = db.prepare(`
-    SELECT l.id FROM leads l
-    WHERE l.country    = 'UK'
-      AND l.phone      IS NOT NULL AND l.phone != ''
-      AND l.do_not_contact = 0
-      AND l.id NOT IN (
-        SELECT DISTINCT lead_id FROM wa_queue
-        WHERE status IN ('pending','processing','done')
-          AND created_at > ?
-      )
-      AND l.id NOT IN (
-        SELECT DISTINCT lead_id FROM sends
-        WHERE channel = 'whatsapp' AND sent_at > ?
-      )
-      AND l.phone NOT IN (
-        SELECT DISTINCT s.phone FROM sends s
-        WHERE s.channel = 'whatsapp' AND s.status = 'sent' AND s.sent_at > ?
-      )
-    ORDER BY l.id
-  `).all(weekAgo, weekAgo, weekAgo);
-
   const insert = db.prepare(
-    'INSERT OR IGNORE INTO wa_queue (lead_id) VALUES (?)'
+    'INSERT INTO wa_queue (lead_id, follow_up_num) VALUES (?, ?)'
   );
 
-  let added = 0;
-  const addMany = db.transaction(leads => {
-    for (const { id } of leads) {
-      insert.run(id);
-      added++;
-    }
+  const insertAll = db.transaction(rows => {
+    for (const { id, follow_up_num } of rows) insert.run(id, follow_up_num);
   });
-  addMany(eligible);
 
-  return added;
+  // ── Initial messages ──────────────────────────────────────────────
+  const initial = db.prepare(`
+    SELECT l.id, 0 AS follow_up_num FROM leads l
+    WHERE l.country = 'UK'
+      AND l.phone IS NOT NULL AND l.phone != ''
+      AND l.do_not_contact = 0
+      AND l.id NOT IN (
+        SELECT lead_id FROM wa_queue
+        WHERE follow_up_num = 0 AND status IN ('pending','processing','done','failed')
+      )
+      AND l.phone NOT IN (
+        SELECT phone FROM sends
+        WHERE channel = 'whatsapp' AND follow_up_num = 0 AND status = 'sent'
+      )
+    ORDER BY l.id
+  `).all();
+
+  // ── Follow-ups 1, 2, 3 ───────────────────────────────────────────
+  const fuResults = [0, 0, 0];
+  const followUps = [];
+
+  for (const n of [1, 2, 3]) {
+    const rows = db.prepare(`
+      SELECT l.id, ? AS follow_up_num FROM leads l
+      WHERE l.country = 'UK'
+        AND l.phone IS NOT NULL AND l.phone != ''
+        AND l.do_not_contact = 0
+        -- previous follow-up (or initial) was sent 3+ days ago
+        AND EXISTS (
+          SELECT 1 FROM sends s
+          WHERE s.lead_id = l.id
+            AND s.channel = 'whatsapp'
+            AND s.follow_up_num = ?
+            AND s.status = 'sent'
+            AND s.sent_at <= datetime('now', '-3 days')
+        )
+        -- this follow-up not yet queued or sent
+        AND l.id NOT IN (
+          SELECT lead_id FROM wa_queue
+          WHERE follow_up_num = ? AND status IN ('pending','processing','done','failed')
+        )
+        AND l.id NOT IN (
+          SELECT lead_id FROM sends
+          WHERE channel = 'whatsapp' AND follow_up_num = ? AND status = 'sent'
+        )
+      ORDER BY l.id
+    `).all(n, n - 1, n, n);
+
+    fuResults[n - 1] = rows.length;
+    followUps.push(...rows);
+  }
+
+  const all = [...initial, ...followUps];
+  if (all.length) insertAll(all);
+
+  return {
+    initial: initial.length,
+    fu1: fuResults[0],
+    fu2: fuResults[1],
+    fu3: fuResults[2],
+    total: all.length,
+  };
 }
 
-// Get the next pending job, locking it to 'processing'.
+// Get next pending job, locking it to 'processing'.
 export function nextJob() {
   const db = getDb();
 
@@ -56,16 +86,17 @@ export function nextJob() {
     SELECT q.*, l.name, l.phone, l.city, l.email, l.booking_url
     FROM wa_queue q
     JOIN leads l ON l.id = q.lead_id
-    WHERE q.status       = 'pending'
+    WHERE q.status = 'pending'
       AND l.do_not_contact = 0
-      AND l.phone        IS NOT NULL AND l.phone != ''
+      AND l.phone IS NOT NULL AND l.phone != ''
       AND q.scheduled_at <= datetime('now')
       AND l.phone NOT IN (
-        SELECT DISTINCT phone FROM sends
+        SELECT phone FROM sends
         WHERE channel = 'whatsapp' AND status = 'sent'
+          AND follow_up_num = q.follow_up_num
           AND sent_at > datetime('now', '-7 days')
       )
-    ORDER BY q.created_at ASC
+    ORDER BY q.follow_up_num ASC, q.created_at ASC
     LIMIT 1
   `).get();
 
@@ -79,18 +110,13 @@ export function nextJob() {
 }
 
 export function markDone(jobId) {
-  getDb().prepare(
-    "UPDATE wa_queue SET status = 'done' WHERE id = ?"
-  ).run(jobId);
+  getDb().prepare("UPDATE wa_queue SET status = 'done' WHERE id = ?").run(jobId);
 }
 
 export function markFailed(jobId, error) {
   const db = getDb();
   const job = db.prepare('SELECT attempts FROM wa_queue WHERE id = ?').get(jobId);
-
-  // After 3 attempts, skip permanently
   const newStatus = (job?.attempts ?? 0) >= 3 ? 'failed' : 'pending';
-
   db.prepare(`
     UPDATE wa_queue
     SET status = ?, last_error = ?, scheduled_at = datetime('now', '+10 minutes')
@@ -105,8 +131,8 @@ export function pendingCount() {
 }
 
 export function queueStats() {
-  const db = getDb();
-  return db.prepare(`
-    SELECT status, COUNT(*) as n FROM wa_queue GROUP BY status
+  return getDb().prepare(`
+    SELECT follow_up_num, status, COUNT(*) as n
+    FROM wa_queue GROUP BY follow_up_num, status ORDER BY follow_up_num, status
   `).all();
 }

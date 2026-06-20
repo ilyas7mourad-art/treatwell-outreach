@@ -8,12 +8,12 @@ export const log = pino({
     : undefined,
 });
 
-export function logSend({ leadId, channel = 'whatsapp', templateId, phone, status, error }) {
+export function logSend({ leadId, channel = 'whatsapp', templateId, phone, status, error, followUpNum = 0 }) {
   const db = getDb();
   db.prepare(`
-    INSERT INTO sends (lead_id, channel, template_id, phone, status, error)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(leadId, channel, templateId ?? null, phone ?? null, status, error ?? null);
+    INSERT INTO sends (lead_id, channel, template_id, phone, status, error, follow_up_num)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(leadId, channel, templateId ?? null, phone ?? null, status, error ?? null, followUpNum);
 }
 
 export function recentSends(limit = 20) {
