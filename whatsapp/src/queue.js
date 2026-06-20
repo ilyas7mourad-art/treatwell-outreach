@@ -10,6 +10,7 @@ export function buildQueue() {
   //   - UK, has phone, not DNC
   //   - not already queued (pending/done this week)
   //   - not already sent on WhatsApp this week
+  //   - phone not already contacted (catches same number across multiple locations)
   const eligible = db.prepare(`
     SELECT l.id FROM leads l
     WHERE l.country    = 'UK'
@@ -24,8 +25,12 @@ export function buildQueue() {
         SELECT DISTINCT lead_id FROM sends
         WHERE channel = 'whatsapp' AND sent_at > ?
       )
+      AND l.phone NOT IN (
+        SELECT DISTINCT s.phone FROM sends s
+        WHERE s.channel = 'whatsapp' AND s.status = 'sent' AND s.sent_at > ?
+      )
     ORDER BY l.id
-  `).all(weekAgo, weekAgo);
+  `).all(weekAgo, weekAgo, weekAgo);
 
   const insert = db.prepare(
     'INSERT OR IGNORE INTO wa_queue (lead_id) VALUES (?)'
@@ -55,6 +60,11 @@ export function nextJob() {
       AND l.do_not_contact = 0
       AND l.phone        IS NOT NULL AND l.phone != ''
       AND q.scheduled_at <= datetime('now')
+      AND l.phone NOT IN (
+        SELECT DISTINCT phone FROM sends
+        WHERE channel = 'whatsapp' AND status = 'sent'
+          AND sent_at > datetime('now', '-7 days')
+      )
     ORDER BY q.created_at ASC
     LIMIT 1
   `).get();
