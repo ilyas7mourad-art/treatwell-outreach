@@ -53,19 +53,10 @@ def _get_sheet():
     return gc.open_by_key(sheet_id)
 
 
-def sync_leads(sh) -> int:
+def sync_leads(sh, enriched: dict) -> int:
     if not MASTER_CSV.exists():
         logger.warning(f"No master CSV at {MASTER_CSV}")
         return 0
-
-    # Build email/phone lookup from enriched CSV (keyed by booking_url)
-    enriched: dict[str, dict] = {}
-    if ENRICHED_CSV.exists():
-        with open(ENRICHED_CSV, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                url = row.get("booking_url", "")
-                if url:
-                    enriched[url] = row
 
     ws = sh.worksheet("Leads")
     ws.clear()
@@ -106,6 +97,56 @@ def sync_leads(sh) -> int:
     return len(rows)
 
 
+def sync_contacted(sh, enriched: dict) -> int:
+    """Write a 'Contacted' tab with only leads where at least one outreach was sent."""
+    try:
+        ws = sh.worksheet("Contacted")
+    except Exception:
+        ws = sh.add_worksheet("Contacted", rows=5000, cols=15)
+
+    ws.clear()
+    ws.append_row(LEADS_HEADERS)
+    ws.freeze(rows=1)
+
+    rows = []
+    for e in enriched.values():
+        sent      = e.get("sent_at", "").strip()
+        sms_sent  = e.get("sms_sent_at", "").strip()
+        if not sent and not sms_sent:
+            continue
+
+        def _date(col):
+            ts = e.get(col, "")
+            return ts[:10] if ts else ""
+
+        rows.append([
+            e.get("country", ""),
+            e.get("city", ""),
+            e.get("name", ""),
+            e.get("address", ""),
+            e.get("email", ""),
+            e.get("phone", ""),
+            e.get("rating", ""),
+            e.get("review_count", ""),
+            _date("sent_at"),
+            _date("follow_up_1_sent_at"),
+            _date("follow_up_2_sent_at"),
+            _date("follow_up_3_sent_at"),
+            _date("sms_sent_at"),
+            "Yes" if e.get("replied", "").lower() == "true" else "",
+            e.get("booking_url", ""),
+        ])
+
+    # Sort: replied first, then by email sent date
+    rows.sort(key=lambda r: (r[13] != "Yes", r[8] or r[12]), reverse=False)
+
+    if rows:
+        ws.append_rows(rows, value_input_option="RAW")
+
+    logger.info(f"Contacted tab: {len(rows)} leads")
+    return len(rows)
+
+
 def sync_emails(sh) -> int:
     if not EMAIL_LOG.exists():
         logger.info("No email log yet — skipping email tab sync")
@@ -140,9 +181,20 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         sh = _get_sheet()
-        leads = sync_leads(sh)
-        emails = sync_emails(sh)
-        print(f"Done — {leads} leads, {emails} email records synced.")
+
+        # Build enriched lookup once, reuse across tabs
+        enriched: dict[str, dict] = {}
+        if ENRICHED_CSV.exists():
+            with open(ENRICHED_CSV, newline="", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    url = row.get("booking_url", "")
+                    if url:
+                        enriched[url] = row
+
+        leads     = sync_leads(sh, enriched)
+        contacted = sync_contacted(sh, enriched)
+        emails    = sync_emails(sh)
+        print(f"Done — {leads} leads, {contacted} contacted, {emails} email records synced.")
     except Exception as exc:
         logger.error(f"Sheets sync failed: {exc}")
         sys.exit(1)
