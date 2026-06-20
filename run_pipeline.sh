@@ -4,7 +4,7 @@
 set -euo pipefail
 
 WORKDIR="/home/mma/treatwell-outreach"
-MASTER="$WORKDIR/output/leads_master.csv"
+MASTER="$WORKDIR/output/leads_master_enriched.csv"
 
 cd "$WORKDIR"
 mkdir -p "$WORKDIR/output" "$WORKDIR/logs"
@@ -26,6 +26,9 @@ python3 -m scraper.send \
     --input "$MASTER" \
     --max-daily 20 \
     --log-level INFO
+
+echo "Syncing to Google Sheets..."
+python3 -m scraper.sync_sheets || echo "WARNING: Sheets sync failed (non-fatal)"
 
 echo ""
 echo "============================================================"
