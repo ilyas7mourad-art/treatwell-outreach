@@ -100,33 +100,19 @@ function seedTemplates(db) {
     'INSERT OR IGNORE INTO templates (variant, body) VALUES (?, ?)'
   );
   const templates = [
-    ['A', `Hey {first_name} 👋
+    ['A', `hey saw {business_name} on treatwell just wanted to reach out real quick treatwell takes a cut from every booking you get through them i build barbers their own booking site your domain zero commission one payment you own it forever worth a quick chat
 
-Spotted {business_name} on Treatwell — looks great.
+ilyas`],
 
-Quick one: Treatwell takes a commission on every booking they send you. I build barbers their own booking site — your domain, zero commission, one payment, you own it forever.
+    ['B', `hey just came across {business_name} on treatwell noticed you got some good reviews on there quick thing though treatwell are taking a percentage of every booking they send you i help barbers cut them out completely own booking site your brand no commission ever just one payment
 
-Worth a quick chat? 🙏
+up for a chat
 
-Ilyas
-bookbarber.design`],
+ilyas`],
 
-    ['B', `Hi {first_name},
+    ['C', `hey saw {business_name} on treatwell wanted to drop you a message real quick how much are you giving treatwell every month most barbers i speak to are surprised when they work it out i build booking sites for barbers your own domain zero fees you own it outright
 
-Came across {business_name} on Treatwell. Your reviews are solid.
-
-Wanted to reach out — every booking Treatwell sends you costs you a cut. I help barbers launch their own commission-free site. Yours to keep forever, no monthly fees.
-
-Fancy a chat?
-
-Ilyas — bookbarber.design`],
-
-    ['C', `Hey {first_name} — noticed {business_name} on Treatwell.
-
-Every booking they send you, they take a percentage. I build custom booking sites for barbers — your brand, your clients, zero commission.
-
-One payment, yours forever. Happy to show you what it looks like 👇
-bookbarber.design
+ilyas`],
 
 — Ilyas`],
 
@@ -140,18 +126,15 @@ I build booking sites that cut them out completely. No commission ever.
 
 Worth a look? bookbarber.design
 
-Ilyas`],
+    ['D', `hey found {business_name} on treatwell just a quick one treatwell charge you every time someone books through them i build barbers a proper booking site on your own domain no monthly fees no commission you just pay once and its yours
 
-    ['E', `Hey {first_name} 👋
+worth a chat
 
-{business_name} looks great on Treatwell — but you're paying for every client they send you.
+ilyas`],
 
-I do one thing: build barbers their own booking site. You own it, no monthly fees, no commission. Could save you hundreds a month.
+    ['E', `hey just spotted {business_name} on treatwell wanted to reach out i do one thing i build barbers their own booking site so you stop paying treatwell their cut your domain your clients you own it no ongoing fees
 
-Fancy a quick chat?
-
-Ilyas
-bookbarber.design`],
+ilyas`],
   ];
   for (const [variant, body] of templates) insert.run(variant, body);
 }
