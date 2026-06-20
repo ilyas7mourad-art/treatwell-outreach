@@ -15,6 +15,26 @@ function looksBanned(err) {
   return BAN_PATTERNS.some(p => p.test(msg));
 }
 
+const SEND_HOUR_START = 9;   // 9am UK
+const SEND_HOUR_END   = 22;  // 10pm UK
+
+function ukHour() {
+  return parseInt(
+    new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Europe/London' })
+      .format(new Date()),
+    10
+  );
+}
+
+function msUntilAllowed() {
+  const now = new Date();
+  const ukNow = new Date(now.toLocaleString('en-GB', { timeZone: 'Europe/London' }));
+  const next = new Date(ukNow);
+  next.setHours(SEND_HOUR_START, 0, 0, 0);
+  if (next <= ukNow) next.setDate(next.getDate() + 1);
+  return next - ukNow;
+}
+
 let _running = false;
 let _sleepReject = null;
 
@@ -35,6 +55,15 @@ export async function startWorker(dryRun = false) {
   log.info({ pendingCount: pendingCount() }, 'Worker starting');
 
   while (_running) {
+    // Time-of-day check (9am–10pm UK)
+    const hour = ukHour();
+    if (hour < SEND_HOUR_START || hour >= SEND_HOUR_END) {
+      const waitMs = msUntilAllowed();
+      log.info({ hour, waitMs: Math.round(waitMs / 60000) + 'm' }, 'Outside sending hours — sleeping until 9am UK');
+      await sleep(waitMs);
+      continue;
+    }
+
     // Rate-limit check
     const limit = checkLimit();
     if (!limit.allowed) {
