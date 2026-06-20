@@ -19,7 +19,12 @@ load_dotenv()
 logger = logging.getLogger("treatwell.sheets")
 
 
-LEADS_HEADERS = ["Country", "City", "Name", "Address", "Email", "Phone", "Rating", "Reviews", "Booking URL"]
+LEADS_HEADERS = [
+    "Country", "City", "Name", "Address", "Email", "Phone",
+    "Rating", "Reviews",
+    "Email 1", "Follow-up 1", "Follow-up 2", "Follow-up 3",
+    "Replied", "Booking URL",
+]
 EMAIL_HEADERS = ["Date Sent", "Step", "Venue Name", "To Email", "Subject", "Status", "Replied"]
 
 MASTER_CSV  = Path("output/leads_master.csv")
@@ -72,6 +77,10 @@ def sync_leads(sh) -> int:
         for row in reader:
             url = row.get("booking_url", "")
             e = enriched.get(url, row)  # fall back to master row if not enriched
+            def _date(col):
+                ts = e.get(col, "")
+                return ts[:10] if ts else ""  # "2026-06-20" or ""
+
             rows.append([
                 row.get("country", ""),
                 row.get("city", ""),
@@ -81,6 +90,11 @@ def sync_leads(sh) -> int:
                 e.get("phone", ""),
                 row.get("rating", ""),
                 row.get("review_count", ""),
+                _date("sent_at"),
+                _date("follow_up_1_sent_at"),
+                _date("follow_up_2_sent_at"),
+                _date("follow_up_3_sent_at"),
+                "Yes" if e.get("replied", "").lower() == "true" else "",
                 url,
             ])
 
