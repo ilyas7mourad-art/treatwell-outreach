@@ -59,8 +59,26 @@ echo "  If Google Maps enrichment fails with missing libs, run once on the serve
 echo "    sudo $PLAYWRIGHT install-deps chromium"
 EOF
 
-# ── 5. Install systemd services (user-level — no sudo required) ──────────────
-echo "[5/6] Installing systemd services..."
+# ── 5. Install Node.js + WhatsApp module dependencies ────────────────────────
+echo "[5/7] Installing Node.js + WhatsApp module..."
+ssh "$SERVER" bash -s -- "$REMOTE_DIR" <<'EOF'
+REMOTE_DIR="$1"
+# Install Node.js 20 LTS if not already installed
+if ! command -v node &>/dev/null || [[ "$(node -e 'process.stdout.write(process.version.split(".")[0].slice(1))')" -lt 18 ]]; then
+    echo "  Installing Node.js 20 LTS via NodeSource..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+fi
+echo "  Node $(node --version), npm $(npm --version)"
+
+# Install npm deps (better-sqlite3 requires native build tools)
+cd "$REMOTE_DIR/whatsapp"
+npm install --omit=dev 2>&1 | tail -5
+echo "  npm install complete."
+EOF
+
+# ── 6. Install systemd services (user-level — no sudo required) ──────────────
+echo "[6/7] Installing systemd services..."
 ssh "$SERVER" bash -s -- "$REMOTE_DIR" <<'ENDSSH'
 REMOTE_DIR="$1"
 chmod +x "$REMOTE_DIR/run_pipeline.sh" "$REMOTE_DIR/run_scraper_loop.sh"
@@ -75,18 +93,25 @@ cp "$REMOTE_DIR/treatwell-outreach.service" \
 cp "$REMOTE_DIR/treatwell-scraper-loop.service" \
    ~/.config/systemd/user/treatwell-scraper-loop.service
 
+# WhatsApp outreach worker (long-running, started manually after QR scan)
+cp "$REMOTE_DIR/treatwell-whatsapp.service" \
+   ~/.config/systemd/user/treatwell-whatsapp.service
+
 systemctl --user daemon-reload
 systemctl --user enable treatwell-outreach
 systemctl --user enable treatwell-scraper-loop
+# NOTE: do NOT auto-start whatsapp service — must scan QR first
 systemctl --user restart treatwell-scraper-loop
 
 echo "  Services installed."
-echo "  Scraper loop:  systemctl --user status treatwell-scraper-loop"
-echo "  Send service:  systemctl --user status treatwell-outreach"
+echo "  Scraper loop:   systemctl --user status treatwell-scraper-loop"
+echo "  Send service:   systemctl --user status treatwell-outreach"
+echo "  WhatsApp worker: scan QR first (see README), then:"
+echo "    systemctl --user start treatwell-whatsapp"
 ENDSSH
 
-# ── 6. Set up cron job (9am London time daily) ───────────────────────────────
-echo "[6/6] Setting up cron job (daily email send)..."
+# ── 7. Set up cron job (9am London time daily) ───────────────────────────────
+echo "[7/7] Setting up cron job (daily email send)..."
 ssh "$SERVER" bash -s -- "$REMOTE_DIR" <<'EOF'
 REMOTE_DIR="$1"
 CRON_JOB="0 9 * * * $REMOTE_DIR/run_pipeline.sh >> $REMOTE_DIR/logs/cron.log 2>&1"
@@ -118,3 +143,11 @@ echo "  Cron log:            tail -f $REMOTE_DIR/logs/cron.log"
 echo ""
 echo "  Scraper: runs 24/7, scrapes every hour, merges into leads_master.csv"
 echo "  Sender:  cron at 9am London time, max 20 emails/day"
+echo ""
+echo "  WhatsApp: first run — SSH in and do:"
+echo "    cd $REMOTE_DIR/whatsapp"
+echo "    node src/index.js dry-run    # preview what would be sent"
+echo "    node src/index.js start      # scan QR with your phone"
+echo "  Once authenticated, enable as a service:"
+echo "    systemctl --user enable --now treatwell-whatsapp"
+echo "  WhatsApp log: tail -f $REMOTE_DIR/logs/whatsapp.log"

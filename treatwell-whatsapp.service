@@ -1,0 +1,18 @@
+[Unit]
+Description=Treatwell WhatsApp Outreach Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mma/treatwell-outreach/whatsapp
+ExecStart=/usr/bin/node src/index.js start
+Restart=on-failure
+RestartSec=60
+StandardOutput=append:/home/mma/treatwell-outreach/logs/whatsapp.log
+StandardError=append:/home/mma/treatwell-outreach/logs/whatsapp.log
+Environment=PYTHONUNBUFFERED=1
+Environment=LOG_LEVEL=info
+
+[Install]
+WantedBy=default.target

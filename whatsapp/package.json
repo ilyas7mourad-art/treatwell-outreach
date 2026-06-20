@@ -1,0 +1,19 @@
+{
+  "name": "treatwell-whatsapp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "WhatsApp outreach module for treatwell-outreach pipeline",
+  "main": "src/index.js",
+  "scripts": {
+    "start":    "node src/index.js start",
+    "dry-run":  "node src/index.js dry-run",
+    "import":   "node src/index.js import-leads",
+    "stats":    "node src/index.js stats"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.5",
+    "better-sqlite3":          "^9.4.3",
+    "pino":                    "^9.1.0",
+    "pino-pretty":             "^11.0.0"
+  }
+}
