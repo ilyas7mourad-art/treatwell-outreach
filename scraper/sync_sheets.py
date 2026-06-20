@@ -22,7 +22,7 @@ logger = logging.getLogger("treatwell.sheets")
 LEADS_HEADERS = ["Country", "City", "Name", "Address", "Email", "Phone", "Rating", "Reviews", "Booking URL"]
 EMAIL_HEADERS = ["Date Sent", "Step", "Venue Name", "To Email", "Subject", "Status", "Replied"]
 
-MASTER_CSV = Path("output/leads_master.csv")
+MASTER_CSV = Path("output/leads_master_enriched.csv")
 EMAIL_LOG  = Path("output/email_log.csv")
 
 
