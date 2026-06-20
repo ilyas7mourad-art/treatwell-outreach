@@ -53,6 +53,8 @@ export async function connect(retries = 0) {
     logger: log.child({ module: 'baileys', level: 'silent' }),
     generateHighQualityLinkPreview: false,
     syncFullHistory: false,
+    // Needed so WhatsApp can re-request messages that failed to decrypt
+    getMessage: async () => ({ conversation: '' }),
   });
 
   sock.ev.on('creds.update', saveCreds);
