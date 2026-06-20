@@ -54,6 +54,10 @@ while true; do
                 --resume \
                 --log-level INFO
         fi
+
+        # ── Step 3: Sync to Google Sheets ────────────────────────
+        echo "[3/3] Syncing to Google Sheets..."
+        python3 -m scraper.sync_sheets || echo "  WARNING: Sheets sync failed (non-fatal)"
     fi
 
     echo "  Run complete: $(date). Sleeping ${SLEEP_SECONDS}s..."
