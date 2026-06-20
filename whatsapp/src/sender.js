@@ -16,10 +16,12 @@ function looksBanned(err) {
 }
 
 let _running = false;
+let _sleepReject = null;
 
 export function stop() {
   _running = false;
   log.info('Stop signal received — will halt after current message.');
+  if (_sleepReject) _sleepReject();  // cancel any pending delay immediately
 }
 
 // Main send loop — runs until stopped or queue is empty.
@@ -130,5 +132,8 @@ export async function startWorker(dryRun = false) {
 }
 
 function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    _sleepReject = () => { clearTimeout(t); resolve(); };
+  });
 }
