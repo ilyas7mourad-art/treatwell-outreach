@@ -1,6 +1,5 @@
 #!/bin/bash
-# run_pipeline.sh — Daily email send step (runs at 9am London time via cron)
-# Reads from leads_master.csv which the scraper loop keeps up to date.
+# run_pipeline.sh — Daily sync (email/SMS disabled, WhatsApp handles outreach)
 set -euo pipefail
 
 WORKDIR="/home/mma/treatwell-outreach"
@@ -13,30 +12,18 @@ LOG="$WORKDIR/logs/pipeline_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOG") 2>&1
 
 echo "============================================================"
-echo " Daily send started: $(date)"
+echo " Daily sync started: $(date)"
 echo "============================================================"
 
 if [ ! -f "$MASTER" ]; then
-    echo "No master CSV yet ($MASTER). Scraper loop hasn't run yet — try again later."
+    echo "No master CSV yet — scraper loop hasn't run yet."
     exit 0
 fi
-
-echo "Sending emails from: $MASTER"
-python3 -m scraper.send \
-    --input "$MASTER" \
-    --max-daily 20 \
-    --log-level INFO
-
-echo "Sending SMS to phone-only leads..."
-python3 -m scraper.sms \
-    --input "$MASTER" \
-    --max-daily 20 \
-    --log-level INFO
 
 echo "Syncing to Google Sheets..."
 python3 -m scraper.sync_sheets || echo "WARNING: Sheets sync failed (non-fatal)"
 
 echo ""
 echo "============================================================"
-echo " Daily send complete: $(date)"
+echo " Daily sync complete: $(date)"
 echo "============================================================"
