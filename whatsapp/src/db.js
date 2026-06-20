@@ -114,18 +114,6 @@ ilyas`],
 
 ilyas`],
 
-— Ilyas`],
-
-    ['D', `Hi {first_name},
-
-Found {business_name} on Treatwell — nice setup.
-
-Honest question: how much are you giving Treatwell each month? Most barbers are surprised when they work it out.
-
-I build booking sites that cut them out completely. No commission ever.
-
-Worth a look? bookbarber.design
-
     ['D', `hey found {business_name} on treatwell just a quick one treatwell charge you every time someone books through them i build barbers a proper booking site on your own domain no monthly fees no commission you just pay once and its yours
 
 worth a chat
