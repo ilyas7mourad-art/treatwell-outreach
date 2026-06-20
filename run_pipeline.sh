@@ -27,6 +27,12 @@ python3 -m scraper.send \
     --max-daily 20 \
     --log-level INFO
 
+echo "Sending SMS to phone-only leads..."
+python3 -m scraper.sms \
+    --input "$MASTER" \
+    --max-daily 20 \
+    --log-level INFO
+
 echo "Syncing to Google Sheets..."
 python3 -m scraper.sync_sheets || echo "WARNING: Sheets sync failed (non-fatal)"
 

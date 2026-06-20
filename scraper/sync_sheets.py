@@ -23,7 +23,7 @@ LEADS_HEADERS = [
     "Country", "City", "Name", "Address", "Email", "Phone",
     "Rating", "Reviews",
     "Email 1", "Follow-up 1", "Follow-up 2", "Follow-up 3",
-    "Replied", "Booking URL",
+    "SMS Sent", "Replied", "Booking URL",
 ]
 EMAIL_HEADERS = ["Date Sent", "Step", "Venue Name", "To Email", "Subject", "Status", "Replied"]
 
@@ -94,6 +94,7 @@ def sync_leads(sh) -> int:
                 _date("follow_up_1_sent_at"),
                 _date("follow_up_2_sent_at"),
                 _date("follow_up_3_sent_at"),
+                _date("sms_sent_at"),
                 "Yes" if e.get("replied", "").lower() == "true" else "",
                 url,
             ])
