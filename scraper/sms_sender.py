@@ -115,17 +115,6 @@ def _count_sms_sent_today(rows: list[dict]) -> int:
     return sum(1 for r in rows if r.get("sms_sent_at", "").startswith(today))
 
 
-def _count_emails_sent_today(rows: list[dict]) -> int:
-    today = date.today().isoformat()
-    email_cols = ["sent_at", "follow_up_1_sent_at", "follow_up_2_sent_at", "follow_up_3_sent_at"]
-    total = 0
-    for row in rows:
-        for col in email_cols:
-            if row.get(col, "").startswith(today):
-                total += 1
-                break
-    return total
-
 
 # ---------------------------------------------------------------------------
 # Public
@@ -142,16 +131,14 @@ def send_sms(
 
     rows, fieldnames = _load_csv(csv_path)
 
-    # Shared daily cap: emails + SMS combined
-    emails_today = _count_emails_sent_today(rows)
-    sms_today    = _count_sms_sent_today(rows)
-    already_sent = emails_today + sms_today
-    quota        = max_daily - already_sent
+    # SMS has its own independent daily cap (does not count emails)
+    sms_today = _count_sms_sent_today(rows)
+    quota     = max_daily - sms_today
 
-    logger.info(f"Daily cap: {max_daily} | emails today: {emails_today} | SMS today: {sms_today} | remaining: {quota}")
+    logger.info(f"SMS daily cap: {max_daily} | SMS sent today: {sms_today} | remaining: {quota}")
 
     if quota <= 0:
-        logger.warning(f"Daily limit of {max_daily} already reached (emails+SMS). Skipping SMS run.")
+        logger.warning(f"SMS daily limit of {max_daily} reached. Run again tomorrow.")
         return
 
     # Build queue: phone but no email, not yet SMS-sent
