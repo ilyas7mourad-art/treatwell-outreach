@@ -202,4 +202,4 @@ def send_sms(
         logger.error(f"SMS send error after {sent_count} messages: {exc}", exc_info=True)
         raise
 
-    logger.info(f"=== SMS done. {sent_count} sent | total today: {already_sent + sent_count}/{max_daily} ===")
+    logger.info(f"=== SMS done. {sent_count} sent | total today: {sms_today + sent_count}/{max_daily} ===")
