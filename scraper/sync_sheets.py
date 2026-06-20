@@ -22,8 +22,9 @@ logger = logging.getLogger("treatwell.sheets")
 LEADS_HEADERS = ["Country", "City", "Name", "Address", "Email", "Phone", "Rating", "Reviews", "Booking URL"]
 EMAIL_HEADERS = ["Date Sent", "Step", "Venue Name", "To Email", "Subject", "Status", "Replied"]
 
-MASTER_CSV = Path("output/leads_master_enriched.csv")
-EMAIL_LOG  = Path("output/email_log.csv")
+MASTER_CSV  = Path("output/leads_master.csv")
+ENRICHED_CSV = Path("output/leads_master_enriched.csv")
+EMAIL_LOG   = Path("output/email_log.csv")
 
 
 def _get_sheet():
@@ -52,6 +53,15 @@ def sync_leads(sh) -> int:
         logger.warning(f"No master CSV at {MASTER_CSV}")
         return 0
 
+    # Build email/phone lookup from enriched CSV (keyed by booking_url)
+    enriched: dict[str, dict] = {}
+    if ENRICHED_CSV.exists():
+        with open(ENRICHED_CSV, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                url = row.get("booking_url", "")
+                if url:
+                    enriched[url] = row
+
     ws = sh.worksheet("Leads")
     ws.clear()
     ws.append_row(LEADS_HEADERS)
@@ -60,22 +70,24 @@ def sync_leads(sh) -> int:
     with open(MASTER_CSV, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            url = row.get("booking_url", "")
+            e = enriched.get(url, row)  # fall back to master row if not enriched
             rows.append([
                 row.get("country", ""),
                 row.get("city", ""),
                 row.get("name", ""),
-                row.get("address", ""),
-                row.get("email", ""),
-                row.get("phone", ""),
+                e.get("address", row.get("address", "")),
+                e.get("email", ""),
+                e.get("phone", ""),
                 row.get("rating", ""),
                 row.get("review_count", ""),
-                row.get("booking_url", ""),
+                url,
             ])
 
     if rows:
         ws.append_rows(rows, value_input_option="RAW")
 
-    logger.info(f"Synced {len(rows)} leads to Sheets")
+    logger.info(f"Synced {len(rows)} leads to Sheets ({len(enriched)} with email data)")
     return len(rows)
 
 
