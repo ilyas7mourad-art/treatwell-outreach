@@ -22,7 +22,8 @@ BREVO_SMS_URL = "https://api.brevo.com/v3/transactionalSMS/sms"
 MAX_DAILY     = 20
 SEND_DELAY    = 5   # seconds between SMS sends (SMS is fast, no need for big delays)
 
-SMS_SENDER  = "BookBarber"   # max 11 chars, alphanumeric
+SMS_SENDER       = "BookBarber"   # max 11 chars, alphanumeric
+ALLOWED_COUNTRIES = {"UK"}
 SMS_TEMPLATE = (
     "Hey {shop_name}, saw your shop on Treatwell. "
     "Treatwell takes a cut of every booking you get. "
@@ -149,7 +150,10 @@ def send_sms(
         sms_sent   = row.get("sms_sent", "").lower() == "true"
         replied    = row.get("replied", "").lower() == "true"
 
+        country = row.get("country", "").upper()
         if has_email or not has_phone or sms_sent or replied:
+            continue
+        if country not in ALLOWED_COUNTRIES:
             continue
 
         country_code = _country_code_for_country(row.get("country", "UK"))

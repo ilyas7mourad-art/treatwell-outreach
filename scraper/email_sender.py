@@ -147,6 +147,9 @@ def _now_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+ALLOWED_COUNTRIES = {"UK"}
+
+
 def _next_step(row: dict) -> dict | None:
     """
     Return the next sequence step that should be sent for this row, or None.
@@ -155,6 +158,8 @@ def _next_step(row: dict) -> dict | None:
     if row.get("replied", "").lower() == "true":
         return None
     if not row.get("email", "").strip():
+        return None
+    if row.get("country", "").upper() not in ALLOWED_COUNTRIES:
         return None
 
     initial_sent_at = _parse_ts(row.get("sent_at", ""))
