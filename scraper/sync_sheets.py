@@ -183,13 +183,28 @@ def main():
         sh = _get_sheet()
 
         # Build enriched lookup once, reuse across tabs
+        # Merge duplicates — keep any non-empty sent/sms fields from any occurrence
+        _KEEP_COLS = [
+            "sent", "sent_at", "follow_up_1_sent", "follow_up_1_sent_at",
+            "follow_up_2_sent", "follow_up_2_sent_at", "follow_up_3_sent",
+            "follow_up_3_sent_at", "replied", "replied_at", "sms_sent", "sms_sent_at",
+            "email", "phone", "address",
+        ]
         enriched: dict[str, dict] = {}
         if ENRICHED_CSV.exists():
             with open(ENRICHED_CSV, newline="", encoding="utf-8") as f:
                 for row in csv.DictReader(f):
                     url = row.get("booking_url", "")
-                    if url:
+                    if not url:
+                        continue
+                    if url not in enriched:
                         enriched[url] = row
+                    else:
+                        # Merge: keep any non-empty values from this row
+                        existing = enriched[url]
+                        for col in _KEEP_COLS:
+                            if row.get(col, "").strip() and not existing.get(col, "").strip():
+                                existing[col] = row[col]
 
         leads     = sync_leads(sh, enriched)
         contacted = sync_contacted(sh, enriched)
