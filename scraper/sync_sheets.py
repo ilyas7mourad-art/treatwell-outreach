@@ -1,6 +1,10 @@
 """
-Sync leads_master.csv and email send log to Google Sheets.
-Run after each scrape/enrich cycle and after each send batch.
+Sync leads_master.csv + WhatsApp send data to Google Sheets.
+
+Tabs:
+  Leads       — all scraped leads (all countries) + WA send status
+  WhatsApp    — UK leads that have been WhatsApp-contacted
+  Contacted   — legacy email/SMS contacted leads
 
 Usage:
     python3 -m scraper.sync_sheets
@@ -9,6 +13,7 @@ Usage:
 import csv
 import logging
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -18,18 +23,21 @@ load_dotenv()
 
 logger = logging.getLogger("treatwell.sheets")
 
-
 LEADS_HEADERS = [
-    "Country", "City", "Name", "Address", "Email", "Phone",
-    "Rating", "Reviews",
-    "Email 1", "Follow-up 1", "Follow-up 2", "Follow-up 3",
-    "SMS Sent", "Replied", "Booking URL",
+    "Country", "City", "Name", "Phone", "Rating", "Reviews",
+    "WA Sent", "WA Follow-up 1", "WA Follow-up 2", "WA Follow-up 3",
+    "WA Opted Out", "Booking URL",
 ]
-EMAIL_HEADERS = ["Date Sent", "Step", "Venue Name", "To Email", "Subject", "Status", "Replied"]
 
-MASTER_CSV  = Path("output/leads_master.csv")
+WA_HEADERS = [
+    "Country", "City", "Name", "Phone",
+    "WA Sent", "WA Follow-up 1", "WA Follow-up 2", "WA Follow-up 3",
+    "Opted Out", "Booking URL",
+]
+
+MASTER_CSV   = Path("output/leads_master.csv")
 ENRICHED_CSV = Path("output/leads_master_enriched.csv")
-EMAIL_LOG   = Path("output/email_log.csv")
+DB_PATH      = Path("output/leads.db")
 
 
 def _get_sheet():
@@ -38,7 +46,6 @@ def _get_sheet():
 
     creds_path = os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON")
     sheet_id   = os.getenv("GOOGLE_SHEET_ID")
-
     if not creds_path or not sheet_id:
         raise RuntimeError("GOOGLE_SHEET_ID and GOOGLE_SHEETS_CREDENTIALS_JSON must be set in .env")
 
@@ -53,165 +60,157 @@ def _get_sheet():
     return gc.open_by_key(sheet_id)
 
 
-def sync_leads(sh, enriched: dict) -> int:
+def _load_wa_data() -> dict:
+    """Load WhatsApp send history from SQLite, keyed by booking_url."""
+    if not DB_PATH.exists():
+        return {}
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT
+            l.booking_url,
+            l.phone,
+            l.do_not_contact,
+            l.dnc_at,
+            MAX(CASE WHEN s.follow_up_num = 0 AND s.status = 'sent' THEN substr(s.sent_at,1,10) END) AS wa_sent,
+            MAX(CASE WHEN s.follow_up_num = 1 AND s.status = 'sent' THEN substr(s.sent_at,1,10) END) AS wa_fu1,
+            MAX(CASE WHEN s.follow_up_num = 2 AND s.status = 'sent' THEN substr(s.sent_at,1,10) END) AS wa_fu2,
+            MAX(CASE WHEN s.follow_up_num = 3 AND s.status = 'sent' THEN substr(s.sent_at,1,10) END) AS wa_fu3
+        FROM leads l
+        LEFT JOIN sends s ON s.lead_id = l.id AND s.channel = 'whatsapp'
+        GROUP BY l.id
+    """).fetchall()
+    conn.close()
+
+    return {r["booking_url"]: dict(r) for r in rows if r["booking_url"]}
+
+
+def _load_enriched() -> dict:
+    """Load phone numbers from enriched CSV, keyed by booking_url."""
+    enriched = {}
+    if not ENRICHED_CSV.exists():
+        return enriched
+    _KEEP = ["email", "phone", "address"]
+    with open(ENRICHED_CSV, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            url = row.get("booking_url", "")
+            if not url:
+                continue
+            if url not in enriched:
+                enriched[url] = row
+            else:
+                for col in _KEEP:
+                    if row.get(col, "").strip() and not enriched[url].get(col, "").strip():
+                        enriched[url][col] = row[col]
+    return enriched
+
+
+def _get_or_create_ws(sh, name, rows=20000, cols=12):
+    try:
+        return sh.worksheet(name)
+    except Exception:
+        return sh.add_worksheet(name, rows=rows, cols=cols)
+
+
+def sync_leads(sh, enriched: dict, wa: dict) -> int:
     if not MASTER_CSV.exists():
-        logger.warning(f"No master CSV at {MASTER_CSV}")
+        logger.warning("No master CSV found")
         return 0
 
-    ws = sh.worksheet("Leads")
+    ws = _get_or_create_ws(sh, "Leads")
     ws.clear()
     ws.append_row(LEADS_HEADERS)
+    ws.freeze(rows=1)
 
     rows = []
     with open(MASTER_CSV, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            url = row.get("booking_url", "")
-            e = enriched.get(url, row)  # fall back to master row if not enriched
-            def _date(col):
-                ts = e.get(col, "")
-                return ts[:10] if ts else ""  # "2026-06-20" or ""
+        for row in csv.DictReader(f):
+            url  = row.get("booking_url", "")
+            e    = enriched.get(url, {})
+            w    = wa.get(url, {})
+            phone = e.get("phone", "") or w.get("phone", "")
 
             rows.append([
                 row.get("country", ""),
                 row.get("city", ""),
                 row.get("name", ""),
-                e.get("address", row.get("address", "")),
-                e.get("email", ""),
-                e.get("phone", ""),
+                phone,
                 row.get("rating", ""),
                 row.get("review_count", ""),
-                _date("sent_at"),
-                _date("follow_up_1_sent_at"),
-                _date("follow_up_2_sent_at"),
-                _date("follow_up_3_sent_at"),
-                _date("sms_sent_at"),
-                "Yes" if e.get("replied", "").lower() == "true" else "",
+                w.get("wa_sent", "") or "",
+                w.get("wa_fu1", "")  or "",
+                w.get("wa_fu2", "")  or "",
+                w.get("wa_fu3", "")  or "",
+                "Yes" if w.get("do_not_contact") else "",
                 url,
             ])
 
     if rows:
         ws.append_rows(rows, value_input_option="RAW")
 
-    logger.info(f"Synced {len(rows)} leads to Sheets ({len(enriched)} with email data)")
+    logger.info(f"Leads tab: {len(rows)} rows ({len(wa)} with WA data)")
     return len(rows)
 
 
-def sync_contacted(sh, enriched: dict) -> int:
-    """Write a 'Contacted' tab with only leads where at least one outreach was sent."""
-    try:
-        ws = sh.worksheet("Contacted")
-    except Exception:
-        ws = sh.add_worksheet("Contacted", rows=5000, cols=15)
-
+def sync_whatsapp(sh, enriched: dict, wa: dict) -> int:
+    """Tab showing only leads that have been contacted on WhatsApp."""
+    ws = _get_or_create_ws(sh, "WhatsApp")
     ws.clear()
-    ws.append_row(LEADS_HEADERS)
+    ws.append_row(WA_HEADERS)
     ws.freeze(rows=1)
 
-    rows = []
-    for e in enriched.values():
-        sent      = e.get("sent_at", "").strip()
-        sms_sent  = e.get("sms_sent_at", "").strip()
-        if not sent and not sms_sent:
-            continue
+    # Build a lookup of master CSV rows by URL for country/city/name
+    master = {}
+    if MASTER_CSV.exists():
+        with open(MASTER_CSV, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                master[row.get("booking_url", "")] = row
 
-        def _date(col):
-            ts = e.get(col, "")
-            return ts[:10] if ts else ""
+    rows = []
+    for url, w in wa.items():
+        if not w.get("wa_sent"):
+            continue
+        m = master.get(url, {})
+        e = enriched.get(url, {})
+        phone = e.get("phone", "") or w.get("phone", "")
 
         rows.append([
-            e.get("country", ""),
-            e.get("city", ""),
-            e.get("name", ""),
-            e.get("address", ""),
-            e.get("email", ""),
-            e.get("phone", ""),
-            e.get("rating", ""),
-            e.get("review_count", ""),
-            _date("sent_at"),
-            _date("follow_up_1_sent_at"),
-            _date("follow_up_2_sent_at"),
-            _date("follow_up_3_sent_at"),
-            _date("sms_sent_at"),
-            "Yes" if e.get("replied", "").lower() == "true" else "",
-            e.get("booking_url", ""),
+            m.get("country", "UK"),
+            m.get("city", ""),
+            m.get("name", ""),
+            phone,
+            w.get("wa_sent", "")  or "",
+            w.get("wa_fu1", "")   or "",
+            w.get("wa_fu2", "")   or "",
+            w.get("wa_fu3", "")   or "",
+            "Yes" if w.get("do_not_contact") else "",
+            url,
         ])
 
-    # Sort: replied first, then by email sent date
-    rows.sort(key=lambda r: (r[13] != "Yes", r[8] or r[12]), reverse=False)
+    # Sort: opted-out last, then by most recent send date
+    rows.sort(key=lambda r: (r[8] == "Yes", r[4]), reverse=False)
 
     if rows:
         ws.append_rows(rows, value_input_option="RAW")
 
-    logger.info(f"Contacted tab: {len(rows)} leads")
-    return len(rows)
-
-
-def sync_emails(sh) -> int:
-    if not EMAIL_LOG.exists():
-        logger.info("No email log yet — skipping email tab sync")
-        return 0
-
-    ws = sh.worksheet("Emails Sent")
-    ws.clear()
-    ws.append_row(EMAIL_HEADERS)
-
-    rows = []
-    with open(EMAIL_LOG, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rows.append([
-                row.get("sent_at", ""),
-                row.get("step", ""),
-                row.get("venue_name", ""),
-                row.get("to_email", ""),
-                row.get("subject", ""),
-                row.get("status", ""),
-                row.get("replied", ""),
-            ])
-
-    if rows:
-        ws.append_rows(rows, value_input_option="RAW")
-
-    logger.info(f"Synced {len(rows)} email records to Sheets")
+    logger.info(f"WhatsApp tab: {len(rows)} contacted leads")
     return len(rows)
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
-        sh = _get_sheet()
+        sh       = _get_sheet()
+        enriched = _load_enriched()
+        wa       = _load_wa_data()
 
-        # Build enriched lookup once, reuse across tabs
-        # Merge duplicates — keep any non-empty sent/sms fields from any occurrence
-        _KEEP_COLS = [
-            "sent", "sent_at", "follow_up_1_sent", "follow_up_1_sent_at",
-            "follow_up_2_sent", "follow_up_2_sent_at", "follow_up_3_sent",
-            "follow_up_3_sent_at", "replied", "replied_at", "sms_sent", "sms_sent_at",
-            "email", "phone", "address",
-        ]
-        enriched: dict[str, dict] = {}
-        if ENRICHED_CSV.exists():
-            with open(ENRICHED_CSV, newline="", encoding="utf-8") as f:
-                for row in csv.DictReader(f):
-                    url = row.get("booking_url", "")
-                    if not url:
-                        continue
-                    if url not in enriched:
-                        enriched[url] = row
-                    else:
-                        # Merge: keep any non-empty values from this row
-                        existing = enriched[url]
-                        for col in _KEEP_COLS:
-                            if row.get(col, "").strip() and not existing.get(col, "").strip():
-                                existing[col] = row[col]
+        leads = sync_leads(sh, enriched, wa)
+        wa_n  = sync_whatsapp(sh, enriched, wa)
 
-        leads     = sync_leads(sh, enriched)
-        contacted = sync_contacted(sh, enriched)
-        emails    = sync_emails(sh)
-        print(f"Done — {leads} leads, {contacted} contacted, {emails} email records synced.")
+        print(f"Done — {leads} leads synced, {wa_n} WhatsApp contacts shown.")
     except Exception as exc:
-        logger.error(f"Sheets sync failed: {exc}")
+        logger.error(f"Sheets sync failed: {exc}", exc_info=True)
         sys.exit(1)
 
 
