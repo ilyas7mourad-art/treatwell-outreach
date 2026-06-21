@@ -96,22 +96,30 @@ async function main() {
       }]);
 
       const total = db.prepare(
-        "SELECT COUNT(*) as n FROM sends WHERE channel='whatsapp'"
+        "SELECT COUNT(*) as n FROM sends WHERE channel='whatsapp' AND status != 'failed'"
       ).get().n;
       const today = db.prepare(`
         SELECT COUNT(*) as n FROM sends
-        WHERE channel='whatsapp' AND sent_at >= date('now')
+        WHERE channel='whatsapp' AND status != 'failed' AND sent_at >= date('now')
       `).get().n;
-      const failed = db.prepare(`
-        SELECT COUNT(*) as n FROM sends
-        WHERE channel='whatsapp' AND status='failed'
-      `).get().n;
+      const delivered = db.prepare(
+        "SELECT COUNT(*) as n FROM sends WHERE channel='whatsapp' AND status='delivered'"
+      ).get().n;
+      const read = db.prepare(
+        "SELECT COUNT(*) as n FROM sends WHERE channel='whatsapp' AND status='read'"
+      ).get().n;
+      const replied = db.prepare(
+        'SELECT COUNT(*) as n FROM leads WHERE replied=1'
+      ).get().n;
+      const failed = db.prepare(
+        "SELECT COUNT(*) as n FROM sends WHERE channel='whatsapp' AND status='failed'"
+      ).get().n;
       const dnc = db.prepare(
         'SELECT COUNT(*) as n FROM leads WHERE do_not_contact=1'
       ).get().n;
 
       console.log('\n── Sends ────────────────────────');
-      printTable([{ total_sent: total, sent_today: today, failed, opted_out: dnc }]);
+      printTable([{ total_sent: total, sent_today: today, delivered, read, replied, failed, opted_out: dnc }]);
 
       console.log('\n── Recent Sends ─────────────────');
       printTable(recentSends(10).map(s => ({

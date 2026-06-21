@@ -8,7 +8,7 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   Browsers,
 } from '@whiskeysockets/baileys';
-import { log } from './logger.js';
+import { log, updateSendStatus, markReplied } from './logger.js';
 import { isOptOut, flagDnc, cancelQueuedJobs } from './optout.js';
 
 const require = createRequire(import.meta.url);
@@ -96,7 +96,23 @@ export async function connect(retries = 0) {
     }
   });
 
-  // Handle inbound messages (opt-out detection)
+  // Delivery + read receipts (double tick → 'delivered', blue tick → 'read')
+  sock.ev.on('messages.update', updates => {
+    for (const { key, update } of updates) {
+      if (!key.fromMe) continue;
+      const receipt = update?.status;
+      // Baileys status codes: 3 = delivered, 4 = read
+      if (receipt === 3) {
+        updateSendStatus(key.remoteJid, 'delivered');
+        log.debug({ jid: key.remoteJid }, 'Message delivered ✓✓');
+      } else if (receipt === 4) {
+        updateSendStatus(key.remoteJid, 'read');
+        log.debug({ jid: key.remoteJid }, 'Message read (blue tick) 👁');
+      }
+    }
+  });
+
+  // Handle inbound messages (opt-out + reply tracking)
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
@@ -106,11 +122,14 @@ export async function connect(retries = 0) {
         ?? msg.message?.extendedTextMessage?.text
         ?? '';
       if (!text) continue;
-      log.debug({ jid, text }, 'Inbound message');
+      log.info({ jid, text }, 'Inbound message');
       if (isOptOut(text)) {
         const changed = flagDnc(jid, 'whatsapp_stop_reply');
         cancelQueuedJobs(jid);
         if (changed) log.info({ jid }, 'Opt-out received — lead flagged DNC');
+      } else {
+        markReplied(jid);
+        log.info({ jid }, 'Reply received — lead marked as replied');
       }
       if (_onMessage) _onMessage(jid, text);
     }

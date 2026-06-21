@@ -60,7 +60,7 @@ function migrate(db) {
       template_id    INTEGER REFERENCES templates(id),
       phone          TEXT,
       sent_at        TEXT DEFAULT (datetime('now')),
-      status         TEXT DEFAULT 'sent' CHECK(status IN ('sent','failed','delivered')),
+      status         TEXT DEFAULT 'sent' CHECK(status IN ('sent','failed','delivered','read')),
       error          TEXT,
       follow_up_num  INTEGER DEFAULT 0
     );
