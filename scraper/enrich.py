@@ -126,10 +126,21 @@ def main() -> None:
     if args.limit:
         rows = rows[: args.limit]
 
-    # If resuming, split into already-done and pending
+    # If resuming, split into already-done and pending.
+    # Check the OUTPUT file for already-enriched URLs (master CSV never has enrich_status).
     if args.resume:
-        pending = [r for r in rows if not r.get("enrich_status")]
-        done = [r for r in rows if r.get("enrich_status")]
+        done_urls: set[str] = set()
+        done_rows: dict[str, dict] = {}
+        if Path(output_path).exists():
+            for r in load_csv(output_path):
+                url = r.get("booking_url", "")
+                if url and r.get("enrich_status"):
+                    done_urls.add(url)
+                    done_rows[url] = r
+        # done = enriched rows from OUTPUT (with phone/email already filled in)
+        # pending = master rows whose URL hasn't been enriched yet
+        done = [done_rows[r.get("booking_url", "")] for r in rows if r.get("booking_url", "") in done_urls]
+        pending = [r for r in rows if r.get("booking_url", "") not in done_urls]
         logger.info(f"Resume mode: {len(done)} already enriched, {len(pending)} pending")
     else:
         pending = rows
