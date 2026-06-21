@@ -144,14 +144,25 @@ def main() -> None:
     logger.info(f"=== Enriching {len(pending)} leads ===")
 
     # ── Step 1: Google Maps ──────────────────────────────────────────────────
+    MAPS_BATCH = 100  # save every N leads so sheets stay up-to-date
     if not args.skip_maps:
         logger.info("Step 1/2: Google Maps (phone + website)")
-        pending = run_maps_enrichment(
-            pending,
-            delay_min=args.maps_delay_min,
-            delay_max=args.maps_delay_max,
-            headless=args.headless,
-        )
+        enriched_pending = []
+        for batch_start in range(0, len(pending), MAPS_BATCH):
+            batch = pending[batch_start: batch_start + MAPS_BATCH]
+            batch_result = run_maps_enrichment(
+                batch,
+                delay_min=args.maps_delay_min,
+                delay_max=args.maps_delay_max,
+                headless=args.headless,
+            )
+            enriched_pending.extend(batch_result)
+            all_rows = done + enriched_pending + pending[batch_start + MAPS_BATCH:]
+            write_csv(all_rows, output_path)
+            logger.info(
+                f"Batch save: {len(enriched_pending)}/{len(pending)} Maps rows done → {output_path}"
+            )
+        pending = enriched_pending
     else:
         logger.info("Step 1/2: Skipping Maps")
         for r in pending:
@@ -159,11 +170,6 @@ def main() -> None:
             r.setdefault("website", "")
             r.setdefault("maps_url", "")
             r.setdefault("enrich_status", "skipped_maps")
-
-    # Write intermediate results immediately so a crash doesn't lose Maps data
-    all_rows = done + pending
-    write_csv(all_rows, output_path)
-    logger.info(f"Intermediate save → {output_path}")
 
     # ── Step 2: Email finder ─────────────────────────────────────────────────
     if not args.maps_only:
