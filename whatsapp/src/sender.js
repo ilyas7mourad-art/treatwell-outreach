@@ -27,12 +27,14 @@ function ukHour() {
 }
 
 function msUntilAllowed() {
-  const now = new Date();
-  const ukNow = new Date(now.toLocaleString('en-GB', { timeZone: 'Europe/London' }));
-  const next = new Date(ukNow);
-  next.setHours(SEND_HOUR_START, 0, 0, 0);
-  if (next <= ukNow) next.setDate(next.getDate() + 1);
-  return next - ukNow;
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    hour: 'numeric', minute: 'numeric', hour12: false, timeZone: 'Europe/London',
+  });
+  const parts = fmt.formatToParts(new Date());
+  const hour   = parseInt(parts.find(p => p.type === 'hour').value, 10);
+  const minute = parseInt(parts.find(p => p.type === 'minute').value, 10);
+  const minsUntil9am = ((SEND_HOUR_START - hour) * 60 - minute + 1440) % 1440;
+  return (minsUntil9am || 1440) * 60_000;
 }
 
 let _running = false;
