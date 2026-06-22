@@ -31,14 +31,14 @@ SMS_TEMPLATES = {
         "Treatwell takes a cut of every booking you get. "
         "I build barbers their own booking site, your domain, "
         "zero commission, one payment, you own it forever. "
-        "Worth a quick chat? Ilyas"
+        "Worth a quick chat? WhatsApp me: wa.me/212653132162 Ilyas"
     ),
     "IT": (
         "Ciao {shop_name}, ho visto il tuo negozio su Treatwell. "
         "Treatwell prende una percentuale su ogni prenotazione che ricevi. "
         "Costruisco siti di prenotazione per barbieri, dominio tuo, zero commissioni, "
         "pagamento unico, lo possiedi per sempre. "
-        "Vale una chiacchierata veloce? Ilyas"
+        "Vale una chiacchierata? Scrivimi su WhatsApp: wa.me/212653132162 Ilyas"
     ),
 }
 SMS_TEMPLATE = SMS_TEMPLATES["UK"]  # default
