@@ -24,7 +24,7 @@ load_dotenv()
 logger = logging.getLogger("treatwell.sheets")
 
 LEADS_HEADERS = [
-    "Country", "City", "Name", "Phone", "Rating", "Reviews",
+    "Country", "City", "Name", "Phone", "Email", "Rating", "Reviews",
     "WA Sent", "WA Follow-up 1", "WA Follow-up 2", "WA Follow-up 3",
     "WA Opted Out", "Booking URL",
 ]
@@ -136,6 +136,7 @@ def sync_leads(sh, enriched: dict, wa: dict) -> int:
                 row.get("city", ""),
                 row.get("name", ""),
                 phone,
+                e.get("email", ""),
                 row.get("rating", ""),
                 row.get("review_count", ""),
                 w.get("wa_sent", "") or "",
