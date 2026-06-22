@@ -23,14 +23,25 @@ MAX_DAILY     = 20
 SEND_DELAY    = 5   # seconds between SMS sends (SMS is fast, no need for big delays)
 
 SMS_SENDER       = "BookBarber"   # max 11 chars, alphanumeric
-ALLOWED_COUNTRIES = {"UK"}
-SMS_TEMPLATE = (
-    "Hey {shop_name}, saw your shop on Treatwell. "
-    "Treatwell takes a cut of every booking you get. "
-    "I build barbers their own booking site, your domain, "
-    "zero commission, one payment, you own it forever. "
-    "Worth a quick chat? Ilyas"
-)
+ALLOWED_COUNTRIES = {"UK", "IT"}
+
+SMS_TEMPLATES = {
+    "UK": (
+        "Hey {shop_name}, saw your shop on Treatwell. "
+        "Treatwell takes a cut of every booking you get. "
+        "I build barbers their own booking site, your domain, "
+        "zero commission, one payment, you own it forever. "
+        "Worth a quick chat? Ilyas"
+    ),
+    "IT": (
+        "Ciao {shop_name}, ho visto il tuo negozio su Treatwell. "
+        "Treatwell prende una percentuale su ogni prenotazione che ricevi. "
+        "Costruisco siti di prenotazione per barbieri, dominio tuo, zero commissioni, "
+        "pagamento unico, lo possiedi per sempre. "
+        "Vale una chiacchierata veloce? Ilyas"
+    ),
+}
+SMS_TEMPLATE = SMS_TEMPLATES["UK"]  # default
 
 SMS_COLS = ["sms_sent", "sms_sent_at"]
 
@@ -184,8 +195,10 @@ def send_sms(
     sent_count = 0
     try:
         for idx, (row_index, row, phone) in enumerate(to_send):
-            name    = row.get("name", "").strip() or "there"
-            message = SMS_TEMPLATE.format(shop_name=name)
+            name     = row.get("name", "").strip() or "there"
+            country  = row.get("country", "UK").upper()
+            template = SMS_TEMPLATES.get(country, SMS_TEMPLATES["UK"])
+            message  = template.format(shop_name=name)
 
             logger.info(f"[{idx + 1}/{len(to_send)}] SMS → +{phone} ({name!r})")
 
