@@ -22,7 +22,7 @@ BREVO_SMS_URL = "https://api.brevo.com/v3/transactionalSMS/sms"
 MAX_DAILY     = 20
 SEND_DELAY    = 5   # seconds between SMS sends (SMS is fast, no need for big delays)
 
-SMS_SENDER       = "BookBarber"   # max 11 chars, alphanumeric
+SMS_SENDER       = "Ilyas"   # max 11 chars, alphanumeric
 ALLOWED_COUNTRIES = {"UK", "IT"}
 
 SMS_TEMPLATES = {
