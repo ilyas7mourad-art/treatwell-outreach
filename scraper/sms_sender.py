@@ -154,23 +154,28 @@ def send_sms(
         return
 
     # Build queue: phone but no email, not yet SMS-sent
+    # Track sent phones globally to avoid re-sending same number across duplicate rows
+    sent_phones: set[str] = set()
+    for row in rows:
+        if row.get("sms_sent", "").lower() == "true":
+            p = row.get("phone", "").strip()
+            if p: sent_phones.add(p)
+
     queue = []
     for i, row in enumerate(rows):
         has_email  = bool(row.get("email", "").strip())
         has_phone  = bool(row.get("phone", "").strip())
-        sms_sent   = row.get("sms_sent", "").lower() == "true"
         replied    = row.get("replied", "").lower() == "true"
 
         country = row.get("country", "").upper()
-        if has_email or not has_phone or sms_sent or replied:
+        if has_email or not has_phone or replied:
             continue
         if country not in ALLOWED_COUNTRIES:
             continue
 
         country_code = _country_code_for_country(row.get("country", "UK"))
         phone = _normalise_phone(row["phone"], default_country_code=country_code)
-        if not phone:
-            logger.warning(f"  Skipping unparseable phone: {row['phone']} ({row.get('name')})")
+        if not phone or phone in sent_phones:
             continue
 
         queue.append((i, row, phone))
@@ -178,6 +183,13 @@ def send_sms(
     if not queue:
         logger.info("No SMS candidates (all phone-only leads already contacted or no valid numbers).")
         return
+
+    # Prioritise IT first, then UK
+    COUNTRY_ORDER = ["IT", "UK"]
+    queue.sort(key=lambda x: (
+        COUNTRY_ORDER.index(x[1].get("country","").upper())
+        if x[1].get("country","").upper() in COUNTRY_ORDER else 99
+    ))
 
     to_send  = queue[:quota]
     deferred = len(queue) - len(to_send)
